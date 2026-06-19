@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>THE HELLO Team — План производства</title>
+<link rel="stylesheet" href="/css/brand.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div id="plan-print-head">
+    <div class="t">THE HELLO Team — план производства</div>
+    <h2>Производственный план на отгрузку</h2>
+    <div class="d" id="printDate"></div>
+  </div>
+
+  <div class="toprow no-print">
+    <div class="logo-mark">♥</div>
+    <nav class="tabbar">
+      <button class="tab" data-tab="main">Главная</button>
+      <button class="tab active" data-tab="plan">План производства</button>
+      <button class="tab" data-tab="kaspi">Kaspi магазин</button>
+    </nav>
+    <div class="center">
+      <div class="wordmark" style="justify-content:center;display:flex;">THE HELLO<span class="script">Team</span></div>
+    </div>
+    <div>
+      <div class="files">
+        <label class="filepill" id="pillOrders">
+          <div class="lbl">не отгруженные</div>
+          <div class="nm empty" id="nmOrders">не загружен</div>
+          <input type="file" id="fileOrders" accept=".xls,.xlsx">
+        </label>
+        <label class="filepill" id="pillItems">
+          <div class="lbl">универсальный отчёт</div>
+          <div class="nm empty" id="nmItems">не загружен</div>
+          <input type="file" id="fileItems" accept=".xls,.xlsx">
+        </label>
+        <button class="btn-icon" id="logoutBtn" title="Выйти">⏻</button>
+      </div>
+      <div class="stamp-line" id="stampLine"></div>
+    </div>
+  </div>
+
+  <section id="tab-main" class="tabpanel hidden">
+    <div class="empty-state">
+      <h3>Главная</h3>
+      <p>Этот раздел в разработке. Сейчас доступен раздел «План производства» — переключитесь на него во вкладках выше.</p>
+    </div>
+  </section>
+
+  <section id="tab-kaspi" class="tabpanel hidden">
+    <div class="empty-state">
+      <h3>Kaspi магазин</h3>
+      <p>Этот раздел в разработке.</p>
+    </div>
+  </section>
+
+  <section id="tab-plan" class="tabpanel">
+
+    <div id="planEmpty" class="empty-state">
+      <h3>Нет данных для расчёта</h3>
+      <p>Загрузите два файла из 1С через кнопки в шапке: «не отгруженные» (заказы) и «универсальный отчёт» (позиции). Данные сохранятся на сервере — все, кто откроет эту ссылку, увидят один и тот же расчёт без повторной загрузки.</p>
+    </div>
+
+    <div id="planContent" class="hidden">
+
+      <div class="row-2" id="sec-orders" style="margin-bottom:16px;">
+        <div class="left card" style="padding:22px;">
+          <div class="pill-tag dark" style="margin-bottom:18px;">⚡ Заказы к отгрузке</div>
+          <div style="display:flex;gap:36px;margin-bottom:24px;flex-wrap:wrap;">
+            <div><div class="bignum num" id="kpiOrders">0</div><div class="bigcap">заказов к<br>отгрузке</div></div>
+            <div><div class="bignum num" id="kpiFires">0</div><div class="bigcap">из них<br>горящих</div></div>
+          </div>
+          <div id="barsWrap"></div>
+        </div>
+        <div class="right card" style="padding:22px;background:var(--blue);">
+          <div class="pill-tag" style="margin-bottom:18px;">⚙ В очереди на производство</div>
+          <div style="display:flex;gap:36px;flex-wrap:wrap;">
+            <div><div class="bignum num" id="kpiUnits" style="color:#fff;">0</div><div class="bigcap" style="color:rgba(255,255,255,.9);">единиц<br>к выпуску</div></div>
+            <div><div class="bignum num" id="kpiTons" style="color:#fff;">0</div><div class="bigcap" style="color:rgba(255,255,255,.9);">тонн<br>в выпуске</div></div>
+          </div>
+        </div>
+      </div>
+
+      <details class="panel no-print">
+        <summary>⚙ Настройки расчёта (категории, ключевые слова, горящие заказы)</summary>
+        <div class="panel-body" id="settingsBody"></div>
+      </details>
+
+      <details class="panel no-print">
+        <summary>🛡 Неснижаемый остаток — список контроля (<span id="controlCount">0</span> позиций)</summary>
+        <div class="panel-body">
+          <div class="chead"><div class="h1">Наименование</div><div class="h2">Норма, шт</div><div class="h3"></div></div>
+          <div id="controlRows"></div>
+          <button class="btn btn-ghost" id="addControlBtn" type="button" style="margin-top:8px;">+ Добавить позицию</button>
+          <div style="margin-top:14px;"><button class="btn btn-pink" id="saveControlBtn" type="button">Сохранить список</button></div>
+        </div>
+      </details>
+
+      <div class="toolbar-row no-print">
+        <div class="section-strip" style="flex:1;margin-bottom:0;">
+          <h2>⚙ План производства <span class="sub">&nbsp;— сколько необходимо продукции, чтобы закрыть неотгруженные заказы</span></h2>
+          <div style="margin-left:auto;display:flex;gap:8px;">
+            <button class="btn btn-ghost" id="printPlanBtn" type="button">🖨 Печать плана</button>
+            <button class="btn btn-dark" id="printAllBtn" type="button">🖨 Печать всего</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="plan-grid" id="planGrid"></div>
+
+      <div class="otherwrap" style="margin-bottom:16px;">
+        <div class="card">
+          <div class="lbl">Прочее — не входит в план производства (услуги, доставка, предоплата и т.п.)</div>
+          <table><tbody id="otherBody"></tbody></table>
+        </div>
+      </div>
+
+      <div class="cat-grid no-print" id="sec-cats">
+        <div class="card catcard">
+          <div class="ch"><span class="pill-tag dark">⚡ Гос закуп · своя доставка</span></div>
+          <div class="orderlist" id="catOwn"></div>
+        </div>
+        <div class="card catcard">
+          <div class="ch"><span class="pill-tag dark">⚡ Гос закуп · через ТК</span></div>
+          <div class="orderlist" id="catTk"></div>
+        </div>
+        <div class="card catcard">
+          <div class="ch"><span class="pill-tag dark">⚡ Прочие заказы</span></div>
+          <div class="orderlist" id="catOther"></div>
+        </div>
+      </div>
+
+      <div class="banner no-print" style="margin-top:16px;">
+        <div class="heart-badge">♥</div>
+        <div class="the">THE</div>
+        <div class="slogan">Your Mood<br>Your Rules</div>
+        <div class="script">Team</div>
+        <div class="hello">hello</div>
+      </div>
+
+    </div>
+  </section>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/js/engine.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

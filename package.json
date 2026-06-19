@@ -1,0 +1,15 @@
+{
+  "name": "the-hello-team-plan",
+  "version": "1.0.0",
+  "description": "THE HELLO Team - plan proizvodstva i otgruzok",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "license": "UNLICENSED",
+  "private": true
+}

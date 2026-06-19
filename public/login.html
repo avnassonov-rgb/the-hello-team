@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>THE HELLO Team — вход</title>
+<link rel="stylesheet" href="/css/brand.css">
+<style>
+  body{min-height:100vh;display:flex;align-items:center;justify-content:center;}
+  .loginwrap{width:100%;max-width:380px;padding:20px;}
+  .loginlogo{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:26px;}
+  .loginlogo .logo-mark{width:62px;height:62px;font-size:26px;}
+  .loginlogo .wordmark{font-size:24px;}
+  .loginlogo .script{font-size:28px;}
+  .logincard{padding:30px 28px;}
+  .logincard h1{font-size:16px;margin:0 0 4px;font-weight:700;}
+  .logincard p.sub{font-size:12.5px;color:var(--muted);margin:0 0 22px;}
+  .pwfield{position:relative;margin-bottom:16px;}
+  .pwfield input{
+    width:100%;padding:13px 16px;border:1.5px solid var(--line);border-radius:12px;
+    font-size:15px;font-family:inherit;letter-spacing:1px;
+  }
+  .pwfield input:focus{outline:none;border-color:var(--pink);}
+  .loginbtn{width:100%;padding:13px;border-radius:12px;font-size:14.5px;}
+  .err{
+    background:var(--pink-light);color:var(--pink-dark);font-size:12.5px;font-weight:600;
+    border-radius:10px;padding:10px 14px;margin-bottom:14px;display:none;
+  }
+  .err.show{display:block;}
+  .loginfoot{text-align:center;margin-top:18px;font-size:11.5px;color:var(--muted);}
+</style>
+</head>
+<body>
+  <div class="loginwrap">
+    <div class="loginlogo">
+      <div class="logo-mark">♥</div>
+      <div class="wordmark">THE HELLO<span class="script">Team</span></div>
+    </div>
+    <div class="card logincard">
+      <h1>Вход в систему</h1>
+      <p class="sub">План производства и отгрузок · общий доступ по паролю</p>
+      <div class="err" id="err">Неверный пароль. Попробуйте ещё раз.</div>
+      <form id="loginForm" autocomplete="off">
+        <div class="pwfield">
+          <input type="password" id="password" name="password" placeholder="Пароль" autocomplete="current-password" autofocus required>
+        </div>
+        <button type="submit" class="btn btn-pink loginbtn" id="loginBtn">Войти</button>
+      </form>
+    </div>
+    <div class="loginfoot">© THE HELLO Team / ПЧЁЛКА — внутренняя система</div>
+  </div>
+<script src="/js/login.js"></script>
+</body>
+</html>
