@@ -16,7 +16,7 @@
   </div>
 
   <div class="toprow no-print">
-    <div class="logo-mark">♥</div>
+    <div class="logo-mark"><svg class="icon" viewBox="0 0 24 24"><path d="M12 21s-7.2-4.6-10-9.1C.4 9.1 1.4 5.4 4.6 4.2 7 3.3 9.4 4.2 12 6.7c2.6-2.5 5-3.4 7.4-2.5 3.2 1.2 4.2 4.9 2.6 7.7C19.2 16.4 12 21 12 21z"/></svg></div>
     <nav class="tabbar">
       <button class="tab" data-tab="main">Главная</button>
       <button class="tab active" data-tab="plan">План производства</button>
@@ -37,7 +37,7 @@
           <div class="nm empty" id="nmItems">не загружен</div>
           <input type="file" id="fileItems" accept=".xls,.xlsx">
         </label>
-        <button class="btn-icon" id="logoutBtn" title="Выйти">⏻</button>
+        <button class="btn-icon" id="logoutBtn" title="Выйти"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v8"/><path d="M18.4 6.6a8 8 0 1 1-12.8 0"/></svg></button>
       </div>
       <div class="stamp-line" id="stampLine"></div>
     </div>
@@ -68,7 +68,7 @@
 
       <div class="row-2" id="sec-orders" style="margin-bottom:16px;">
         <div class="left card" style="padding:22px;">
-          <div class="pill-tag dark" style="margin-bottom:18px;">⚡ Заказы к отгрузке</div>
+          <div class="pill-tag dark" style="margin-bottom:18px;"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h4.146l-1.892 6.117a.75.75 0 0 0 1.281.692l8.5-9.5a.75.75 0 0 0-.559-1.309H9.83l1.953-6.093z"/></svg> Заказы к отгрузке</div>
           <div style="display:flex;gap:36px;margin-bottom:24px;flex-wrap:wrap;">
             <div><div class="bignum num" id="kpiOrders">0</div><div class="bigcap">заказов к<br>отгрузке</div></div>
             <div><div class="bignum num" id="kpiFires">0</div><div class="bigcap">из них<br>горящих</div></div>
@@ -76,7 +76,7 @@
           <div id="barsWrap"></div>
         </div>
         <div class="right card" style="padding:22px;background:var(--blue);">
-          <div class="pill-tag" style="margin-bottom:18px;">⚙ В очереди на производство</div>
+          <div class="pill-tag" style="margin-bottom:18px;"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> В очереди на производство</div>
           <div style="display:flex;gap:36px;flex-wrap:wrap;">
             <div><div class="bignum num" id="kpiUnits" style="color:#fff;">0</div><div class="bigcap" style="color:rgba(255,255,255,.9);">единиц<br>к выпуску</div></div>
             <div><div class="bignum num" id="kpiTons" style="color:#fff;">0</div><div class="bigcap" style="color:rgba(255,255,255,.9);">тонн<br>в выпуске</div></div>
@@ -85,12 +85,12 @@
       </div>
 
       <details class="panel no-print">
-        <summary>⚙ Настройки расчёта (категории, ключевые слова, горящие заказы)</summary>
+        <summary><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> Настройки расчёта (категории, ключевые слова, горящие заказы)</summary>
         <div class="panel-body" id="settingsBody"></div>
       </details>
 
       <details class="panel no-print">
-        <summary>🛡 Неснижаемый остаток — список контроля (<span id="controlCount">0</span> позиций)</summary>
+        <summary><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5l-8-3z"/></svg> Неснижаемый остаток — список контроля (<span id="controlCount">0</span> позиций)</summary>
         <div class="panel-body">
           <div class="chead"><div class="h1">Наименование</div><div class="h2">Норма, шт</div><div class="h3"></div></div>
           <div id="controlRows"></div>
@@ -101,10 +101,10 @@
 
       <div class="toolbar-row no-print">
         <div class="section-strip" style="flex:1;margin-bottom:0;">
-          <h2>⚙ План производства <span class="sub">&nbsp;— сколько необходимо продукции, чтобы закрыть неотгруженные заказы</span></h2>
+          <h2><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> План производства <span class="sub">&nbsp;— сколько необходимо продукции, чтобы закрыть неотгруженные заказы</span></h2>
           <div style="margin-left:auto;display:flex;gap:8px;">
-            <button class="btn btn-ghost" id="printPlanBtn" type="button">🖨 Печать плана</button>
-            <button class="btn btn-dark" id="printAllBtn" type="button">🖨 Печать всего</button>
+            <button class="btn btn-ghost" id="printPlanBtn" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1"/><path d="M6 17v4h12v-4"/></svg> Печать плана</button>
+            <button class="btn btn-dark" id="printAllBtn" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1"/><path d="M6 17v4h12v-4"/></svg> Печать всего</button>
           </div>
         </div>
       </div>
@@ -120,21 +120,21 @@
 
       <div class="cat-grid no-print" id="sec-cats">
         <div class="card catcard">
-          <div class="ch"><span class="pill-tag dark">⚡ Гос закуп · своя доставка</span></div>
+          <div class="ch"><span class="pill-tag dark"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h4.146l-1.892 6.117a.75.75 0 0 0 1.281.692l8.5-9.5a.75.75 0 0 0-.559-1.309H9.83l1.953-6.093z"/></svg> Гос закуп · своя доставка</span></div>
           <div class="orderlist" id="catOwn"></div>
         </div>
         <div class="card catcard">
-          <div class="ch"><span class="pill-tag dark">⚡ Гос закуп · через ТК</span></div>
+          <div class="ch"><span class="pill-tag dark"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h4.146l-1.892 6.117a.75.75 0 0 0 1.281.692l8.5-9.5a.75.75 0 0 0-.559-1.309H9.83l1.953-6.093z"/></svg> Гос закуп · через ТК</span></div>
           <div class="orderlist" id="catTk"></div>
         </div>
         <div class="card catcard">
-          <div class="ch"><span class="pill-tag dark">⚡ Прочие заказы</span></div>
+          <div class="ch"><span class="pill-tag dark"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h4.146l-1.892 6.117a.75.75 0 0 0 1.281.692l8.5-9.5a.75.75 0 0 0-.559-1.309H9.83l1.953-6.093z"/></svg> Прочие заказы</span></div>
           <div class="orderlist" id="catOther"></div>
         </div>
       </div>
 
       <div class="banner no-print" style="margin-top:16px;">
-        <div class="heart-badge">♥</div>
+        <div class="heart-badge"><svg class="icon" viewBox="0 0 24 24"><path d="M12 21s-7.2-4.6-10-9.1C.4 9.1 1.4 5.4 4.6 4.2 7 3.3 9.4 4.2 12 6.7c2.6-2.5 5-3.4 7.4-2.5 3.2 1.2 4.2 4.9 2.6 7.7C19.2 16.4 12 21 12 21z"/></svg></div>
         <div class="the">THE</div>
         <div class="slogan">Your Mood<br>Your Rules</div>
         <div class="script">Team</div>
