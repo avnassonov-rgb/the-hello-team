@@ -1,25 +1,25 @@
 /* THE HELLO Team — фирменные стили. Цвета и компоновка по макету. */
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Caveat:wght@600;700&family=Fredoka:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Caveat:wght@600;700&display=swap');
 
 :root{
-  --pink:#F43A81;
+  --pink:#F4367F;
   --pink-dark:#D92E6F;
-  --pink-light:#FCE3EE;
-  --ink:#1C1C1C;
-  --blue:#7EC3E4;
-  --page:#DAD9DC;
+  --pink-light:#FFAECF;
+  --ink:#1F1F1F;
+  --blue:#85D0F2;
+  --page:#F5F5F5;
   --surface:#FFFFFF;
-  --muted:#7A7878;
+  --muted:#8A8A8A;
   --faint:#A6A4A4;
-  --line:#E7E5E7;
-  --radius:16px;
-  --radius-sm:10px;
-  --shadow:0 1px 2px rgba(28,28,28,.05), 0 10px 26px rgba(28,28,28,.08);
+  --line:#ECECEC;
+  --radius:22px;
+  --radius-sm:14px;
+  --shadow:0 10px 30px rgba(0,0,0,.06);
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{
-  font-family:'Poppins',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-family:'Montserrat',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   background:var(--page);
   color:var(--ink);
   line-height:1.4;
@@ -32,18 +32,18 @@ button{font-family:inherit;}
 
 /* ---------- логотип / шапка ---------- */
 .logo-mark{
-  width:52px;height:52px;border-radius:50%;
+  width:58px;height:58px;border-radius:50%;
   background:var(--pink);
   display:flex;align-items:center;justify-content:center;
-  color:#fff;font-size:22px;flex:none;
+  color:#fff;font-size:24px;flex:none;
   box-shadow:var(--shadow);
 }
 .wordmark{
-  font-weight:800;font-size:30px;letter-spacing:-.01em;color:var(--ink);
-  display:flex;align-items:baseline;gap:7px;white-space:nowrap;
+  font-weight:800;font-size:40px;letter-spacing:-.01em;color:var(--ink);
+  display:flex;align-items:baseline;gap:9px;white-space:nowrap;
 }
 .wordmark .script{
-  font-family:'Caveat',cursive;font-weight:700;font-size:35px;color:var(--pink);
+  font-family:'Caveat',cursive;font-weight:700;font-size:47px;color:var(--pink);
   margin-left:2px;
 }
 
@@ -108,12 +108,12 @@ button{font-family:inherit;}
   background:#fff;border-radius:999px;box-shadow:var(--shadow);
   display:flex;align-items:center;gap:12px;padding:11px 12px 11px 20px;margin-bottom:18px;flex-wrap:wrap;
 }
-.section-strip h2{font-size:15.5px;margin:0;font-weight:700;display:flex;align-items:center;gap:7px;}
+.section-strip h2{margin:0;font-weight:700;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 .section-strip .sub{font-size:12.5px;color:var(--muted);font-weight:400;}
 
-.plan-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-bottom:20px;}
+.plan-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-bottom:24px;}
 .groupcard{display:flex;flex-direction:column;}
-.groupcard .gh{display:flex;align-items:center;gap:8px;padding:14px 14px 12px;flex-wrap:wrap;}
+.groupcard .gh{display:flex;align-items:center;gap:8px;padding:16px 16px 14px;flex-wrap:wrap;}
 .groupcard table{width:100%;border-collapse:collapse;}
 .groupcard thead th{
   font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;
@@ -130,15 +130,15 @@ button{font-family:inherit;}
 .groupcard.control .gh{background:transparent;}
 
 .otherwrap{margin-top:0;}
-.otherwrap .card{padding:14px 18px;}
+.otherwrap .card{padding:18px 22px;}
 .otherwrap .lbl{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;}
 .otherwrap table{width:100%;border-collapse:collapse;font-size:13px;}
 .otherwrap td{padding:6px 0;border-bottom:1px solid var(--line);}
 .otherwrap td.r{text-align:right;font-weight:600;font-variant-numeric:tabular-nums;}
 
 /* ---------- заказы по категориям ---------- */
-.cat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;}
-.catcard .ch{padding:14px;}
+.cat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}
+.catcard .ch{padding:18px;}
 .catcard .orderlist{padding:8px;max-height:640px;overflow-y:auto;}
 .order{border-radius:12px;padding:10px 12px;margin-bottom:6px;border:1px solid var(--line);}
 .order.fire{background:var(--pink-light);border-color:#F5C2DA;}
@@ -164,10 +164,10 @@ button{font-family:inherit;}
   display:flex;align-items:center;justify-content:center;color:var(--pink);font-size:30px;
   box-shadow:0 0 0 3px var(--pink-light) inset;
 }
-.banner .the{font-family:'Fredoka',sans-serif;font-weight:700;font-size:58px;letter-spacing:-.01em;}
+.banner .the{font-family:'Montserrat',sans-serif;font-weight:800;font-size:58px;letter-spacing:-.02em;}
 .banner .slogan{font-size:13.5px;line-height:1.35;font-weight:600;}
 .banner .script{font-family:'Caveat',cursive;font-weight:700;font-size:54px;}
-.banner .hello{font-family:'Fredoka',sans-serif;font-weight:700;font-size:62px;margin-left:auto;}
+.banner .hello{font-family:'Montserrat',sans-serif;font-weight:800;font-size:62px;margin-left:auto;letter-spacing:-.02em;}
 
 /* ---------- настройки / редактор контроля ---------- */
 details.panel{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;}
@@ -175,7 +175,7 @@ details.panel>summary{cursor:pointer;padding:14px 18px;font-weight:600;font-size
 details.panel>summary::-webkit-details-marker{display:none;}
 details.panel>summary::before{content:"›";font-size:18px;color:var(--muted);transition:transform .15s;display:inline-block;}
 details.panel[open]>summary::before{transform:rotate(90deg);}
-.panel-body{padding:2px 18px 18px;}
+.panel-body{padding:4px 22px 22px;}
 .field{margin-bottom:14px;}
 .field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:4px;}
 .field .hint{font-size:11.5px;color:var(--muted);margin-bottom:6px;}
@@ -203,7 +203,7 @@ details.panel[open]>summary::before{transform:rotate(90deg);}
 .toprow .center{flex:1;text-align:center;}
 .toprow .files{display:flex;gap:10px;flex-wrap:wrap;}
 .stamp-line{font-size:11px;color:var(--muted);text-align:right;margin-top:4px;}
-.toolbar-row{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}
+.toolbar-row{display:flex;gap:10px;align-items:center;margin-bottom:20px;flex-wrap:wrap;}
 
 #plan-print-head{display:none;}
 
