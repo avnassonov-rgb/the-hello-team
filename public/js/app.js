@@ -447,34 +447,34 @@
     return lum > 0.62 ? "#1F1F1F" : "#fff";
   }
 
-  // Визуальная разбивка по этапам: цветная полоса (доля от итога) + подписи с точками того же цвета.
-  function mgrStageBarHTML(items, total) {
+  // Значок чемпиона — кубок (SVG), для самого результативного сотрудника за период.
+  var MGR_TROPHY_SVG = '<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h12v2h3v2.5a4.5 4.5 0 0 1-4.04 4.478A6.01 6.01 0 0 1 13 15.92V18h3v2H8v-2h3v-2.08a6.01 6.01 0 0 1-3.96-4.942A4.5 4.5 0 0 1 3 7.5V5h3V3zm0 4H4.5v.5A2.5 2.5 0 0 0 6.6 9.94 8.6 8.6 0 0 1 6 7zm12 0a8.6 8.6 0 0 1-.6 2.94A2.5 2.5 0 0 0 19.5 7.5V7H18z"/></svg>';
+
+  // Визуальная разбивка по этапам: каждый этап — своя цветная полоса на всю ширину,
+  // цвет берётся из Bitrix24 (как в канбане), название этапа слева, количество справа.
+  function mgrStageRowsHTML(items, total) {
     if (!items || !items.length || !total) {
       return '<div class="mgr-stage-empty">нет данных за период</div>';
     }
-    var bar = '<div class="mgr-stage-bar">';
-    items.forEach(function (it, i) {
+    return '<div class="mgr-stage-rows">' + items.map(function (it, i) {
       var color = it.color || mgrFallbackColor(i);
-      var pct = Math.max(6, (it.count / total) * 100);
-      bar += '<div class="mgr-stage-seg" style="width:' + pct + '%;background:' + E.esc(color) + ';color:' + mgrTextOn(color) + ';" title="' + E.esc(it.stage) + ': ' + it.count + '">' + it.count + '</div>';
-    });
-    bar += '</div>';
-    var legend = '<div class="mgr-stage-legend">' + items.map(function (it, i) {
-      var color = it.color || mgrFallbackColor(i);
-      return '<span class="mgr-stage-chip"><span class="mgr-stage-dot" style="background:' + E.esc(color) + ';"></span>' + E.esc(it.stage) + ' — <b>' + fmtMgrNum(it.count) + '</b></span>';
+      return '<div class="mgr-stage-row" style="background:' + E.esc(color) + ';color:' + mgrTextOn(color) + ';">' +
+        '<span class="lbl">' + E.esc(it.stage) + '</span>' +
+        '<span class="cnt">' + fmtMgrNum(it.count) + '</span>' +
+        '</div>';
     }).join("") + '</div>';
-    return bar + legend;
   }
 
-  function managerCardHTML(r) {
+  function managerCardHTML(r, isChampion) {
     var total = r.created + r.moved;
-    var html = '<div class="mgr-card">';
-    html += '<div class="mgr-card-head"><div class="mgr-card-name">' + E.esc(r.name) + '</div>' +
+    var html = '<div class="mgr-card' + (isChampion ? " champion" : "") + '">';
+    html += '<div class="mgr-card-head"><div class="mgr-card-name">' + E.esc(r.name) +
+      (isChampion ? ' <span class="mgr-champion-badge">' + MGR_TROPHY_SVG + ' Чемпион</span>' : "") + '</div>' +
       '<div class="mgr-card-total">всего за период <b>' + fmtMgrNum(total) + '</b></div></div>';
     html += '<div class="mgr-card-section"><div class="mgr-section-title">Создано <b>' + fmtMgrNum(r.created) + '</b></div>' +
-      mgrStageBarHTML(r.createdByStage, r.created) + '</div>';
+      mgrStageRowsHTML(r.createdByStage, r.created) + '</div>';
     html += '<div class="mgr-card-section"><div class="mgr-section-title">Перемещено <b>' + fmtMgrNum(r.moved) + '</b></div>' +
-      mgrStageBarHTML(r.movedByStage, r.moved) + '</div>';
+      mgrStageRowsHTML(r.movedByStage, r.moved) + '</div>';
     html += '</div>';
     return html;
   }
@@ -490,8 +490,11 @@
       return;
     }
     wrap.classList.remove("hidden");
-    report.rows.forEach(function (r) {
-      wrap.insertAdjacentHTML("beforeend", managerCardHTML(r));
+    // отчёт уже отсортирован по сумме (создано+перемещено) по убыванию — первый с ненулевым
+    // итогом и есть самый результативный сотрудник за период, ему достаётся кубок.
+    report.rows.forEach(function (r, idx) {
+      var isChampion = idx === 0 && (r.created + r.moved) > 0;
+      wrap.insertAdjacentHTML("beforeend", managerCardHTML(r, isChampion));
     });
     if (!report.hasUserNames) {
       msg.textContent = "Имена сотрудников не получены — у вебхука Bitrix24 нет прав «Пользователи». Показаны технические ID вместо имён.";
