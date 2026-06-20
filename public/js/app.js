@@ -432,69 +432,66 @@
 
   function fmtMgrNum(n) { return (n || 0).toLocaleString("ru-RU"); }
 
-  function mgrSemanticClass(sem) {
-    if (sem === "S") return "ok";
-    if (sem === "F") return "fail";
-    return "mid";
+  // Палитра-заглушка для этапов, у которых Bitrix24 не вернул цвет (COLOR) —
+  // не влияет на этапы, у которых цвет известен (там используется цвет как в канбане).
+  var MGR_FALLBACK_PALETTE = ["#85D0F2", "#F4367F", "#594C51", "#7FD8A4", "#FFC36E", "#B6A4E8", "#FF8FA3", "#6EC6CA"];
+  function mgrFallbackColor(idx) { return MGR_FALLBACK_PALETTE[idx % MGR_FALLBACK_PALETTE.length]; }
+
+  // Подбирает чёрный/белый текст по яркости фона, чтобы цифра в цветном сегменте читалась.
+  function mgrTextOn(hex) {
+    var h = (hex || "").replace("#", "");
+    if (h.length === 3) h = h.split("").map(function (c) { return c + c; }).join("");
+    var r = parseInt(h.substr(0, 2), 16), g = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16);
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return "#fff";
+    var lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return lum > 0.62 ? "#1F1F1F" : "#fff";
   }
 
-  function renderMgrFeed(events) {
-    if (!events || !events.length) {
-      return '<div class="mgr-feed-empty">Нет событий за выбранный период — нет назначенных карточек.</div>';
+  // Визуальная разбивка по этапам: цветная полоса (доля от итога) + подписи с точками того же цвета.
+  function mgrStageBarHTML(items, total) {
+    if (!items || !items.length || !total) {
+      return '<div class="mgr-stage-empty">нет данных за период</div>';
     }
-    return '<div class="mgr-feed">' + events.map(function (e) {
-      var kind = e.entityType === "lead" ? "лид" : "сделка";
-      var action;
-      if (e.type === "created") {
-        action = "новая(ый) " + kind + " — этап: <span class=\"mgr-stage mgr-stage-" + mgrSemanticClass(e.semantic) + "\">" + E.esc(e.toStage || "—") + "</span>";
-      } else if (e.type === "deleted") {
-        action = kind.charAt(0).toUpperCase() + kind.slice(1) + " удалена(ён)";
-      } else {
-        action = kind.charAt(0).toUpperCase() + kind.slice(1) + " перемещена(ён): " +
-          "<span class=\"mgr-stage\">" + E.esc(e.fromStage || "—") + "</span>" +
-          " <span class=\"mgr-arrow\">→</span> " +
-          "<span class=\"mgr-stage mgr-stage-" + mgrSemanticClass(e.semantic) + "\">" + E.esc(e.toStage || "—") + "</span>";
-      }
-      var badge = e.real ? ' <span class="mgr-real" title="Точно: реальное событие из Bitrix24">●</span>' : "";
-      return '<div class="mgr-feed-item">' +
-        '<span class="mgr-feed-time">' + E.esc(e.timeLabel || "") + "</span>" +
-        '<span class="mgr-feed-text">' + action + badge + " <span class=\"mgr-feed-id\">#" + E.esc(e.entityId) + "</span></span>" +
-        "</div>";
-    }).join("") + "</div>";
+    var bar = '<div class="mgr-stage-bar">';
+    items.forEach(function (it, i) {
+      var color = it.color || mgrFallbackColor(i);
+      var pct = Math.max(6, (it.count / total) * 100);
+      bar += '<div class="mgr-stage-seg" style="width:' + pct + '%;background:' + E.esc(color) + ';color:' + mgrTextOn(color) + ';" title="' + E.esc(it.stage) + ': ' + it.count + '">' + it.count + '</div>';
+    });
+    bar += '</div>';
+    var legend = '<div class="mgr-stage-legend">' + items.map(function (it, i) {
+      var color = it.color || mgrFallbackColor(i);
+      return '<span class="mgr-stage-chip"><span class="mgr-stage-dot" style="background:' + E.esc(color) + ';"></span>' + E.esc(it.stage) + ' — <b>' + fmtMgrNum(it.count) + '</b></span>';
+    }).join("") + '</div>';
+    return bar + legend;
   }
 
-  function renderManagersTable(report) {
+  function managerCardHTML(r) {
+    var total = r.created + r.moved;
+    var html = '<div class="mgr-card">';
+    html += '<div class="mgr-card-head"><div class="mgr-card-name">' + E.esc(r.name) + '</div>' +
+      '<div class="mgr-card-total">всего за период <b>' + fmtMgrNum(total) + '</b></div></div>';
+    html += '<div class="mgr-card-section"><div class="mgr-section-title">Создано <b>' + fmtMgrNum(r.created) + '</b></div>' +
+      mgrStageBarHTML(r.createdByStage, r.created) + '</div>';
+    html += '<div class="mgr-card-section"><div class="mgr-section-title">Перемещено <b>' + fmtMgrNum(r.moved) + '</b></div>' +
+      mgrStageBarHTML(r.movedByStage, r.moved) + '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  function renderManagerCards(report) {
     var msg = document.getElementById("managersMsg");
-    var table = document.getElementById("managersTable");
-    var body = document.getElementById("managersBody");
-    body.innerHTML = "";
+    var wrap = document.getElementById("managersCards");
+    wrap.innerHTML = "";
     if (!report.rows.length) {
       msg.textContent = "За выбранный период нет данных по менеджерам.";
       msg.classList.remove("hidden");
-      table.classList.add("hidden");
+      wrap.classList.add("hidden");
       return;
     }
-    table.classList.remove("hidden");
-    report.rows.forEach(function (r, idx) {
-      var tr = el("tr", { "class": "mgr-row", "data-idx": idx });
-      tr.innerHTML =
-        '<td class="mgr-chev"><svg class="icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l6 5-6 5"/></svg></td>' +
-        "<td>" + E.esc(r.name) + "</td>" +
-        '<td class="r">' + fmtMgrNum(r.createdDeals) + "</td>" +
-        '<td class="r">' + fmtMgrNum(r.createdLeads) + "</td>" +
-        '<td class="r">' + fmtMgrNum(r.movedDeals) + "</td>" +
-        '<td class="r">' + fmtMgrNum(r.movedLeads) + "</td>" +
-        '<td class="r" style="font-weight:700;">' + fmtMgrNum(r.created + r.moved) + "</td>";
-      var feedTr = el("tr", { "class": "mgr-feed-row hidden" });
-      var feedTd = el("td", { colspan: "7" }, renderMgrFeed(r.events));
-      feedTr.appendChild(feedTd);
-      tr.addEventListener("click", function () {
-        var isHidden = feedTr.classList.contains("hidden");
-        feedTr.classList.toggle("hidden");
-        tr.classList.toggle("open", isHidden);
-      });
-      body.appendChild(tr);
-      body.appendChild(feedTr);
+    wrap.classList.remove("hidden");
+    report.rows.forEach(function (r) {
+      wrap.insertAdjacentHTML("beforeend", managerCardHTML(r));
     });
     if (!report.hasUserNames) {
       msg.textContent = "Имена сотрудников не получены — у вебхука Bitrix24 нет прав «Пользователи». Показаны технические ID вместо имён.";
@@ -507,25 +504,25 @@
   function loadManagersReport(period) {
     currentPeriod = period;
     var msg = document.getElementById("managersMsg");
-    var table = document.getElementById("managersTable");
+    var wrap = document.getElementById("managersCards");
     msg.textContent = "Загрузка данных из Bitrix24…";
     msg.classList.remove("hidden");
-    table.classList.add("hidden");
+    wrap.classList.add("hidden");
     fetch("/api/bitrix/report?period=" + encodeURIComponent(period))
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (!j.ok) {
           msg.textContent = (j && j.message) || "Не удалось получить данные из Bitrix24.";
           msg.classList.remove("hidden");
-          table.classList.add("hidden");
+          wrap.classList.add("hidden");
           return;
         }
-        renderManagersTable(j.report);
+        renderManagerCards(j.report);
       })
       .catch(function () {
         msg.textContent = "Ошибка соединения с сервером.";
         msg.classList.remove("hidden");
-        table.classList.add("hidden");
+        wrap.classList.add("hidden");
       });
   }
 
