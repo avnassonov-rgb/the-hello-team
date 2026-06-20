@@ -173,9 +173,23 @@ button{font-family:inherit;}
   box-shadow:0 1px 3px rgba(31,31,31,.08);display:flex;flex-direction:column;gap:16px;
 }
 .mgr-card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:12px;}
-.mgr-card-name{font-size:17px;font-weight:700;color:var(--ink);}
+.mgr-card-name{font-size:17px;font-weight:700;color:var(--ink);display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
 .mgr-card-total{font-size:12.5px;color:rgba(31,31,31,.55);font-weight:500;white-space:nowrap;}
 .mgr-card-total b{color:var(--ink);font-size:14px;font-weight:700;}
+
+/* карточка лучшего сотрудника за период — золотая обводка/подсветка */
+.mgr-card.champion{
+  background:linear-gradient(180deg,#FFF8E1 0%,#ffffff 60%);
+  box-shadow:0 0 0 2px #F4C430,0 8px 20px rgba(244,196,48,.3);
+}
+.mgr-champion-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  background:linear-gradient(135deg,#FFD66B,#F4367F);
+  color:#fff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;
+  padding:4px 11px 4px 8px;border-radius:999px;
+  box-shadow:0 2px 6px rgba(244,54,127,.3);white-space:nowrap;
+}
+.mgr-champion-badge .icon{width:13px;height:13px;}
 
 .mgr-section-title{
   display:flex;align-items:baseline;gap:7px;font-size:12px;font-weight:600;
@@ -183,15 +197,14 @@ button{font-family:inherit;}
 }
 .mgr-section-title b{font-size:19px;color:var(--ink);text-transform:none;letter-spacing:0;font-weight:700;}
 
-.mgr-stage-bar{display:flex;height:34px;border-radius:10px;overflow:hidden;background:rgba(31,31,31,.06);}
-.mgr-stage-seg{
-  display:flex;align-items:center;justify-content:center;min-width:6px;
-  font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;
+/* каждый этап — своя полоса на всю ширину (название + количество), а не общий сегментированный бар */
+.mgr-stage-rows{display:flex;flex-direction:column;gap:8px;}
+.mgr-stage-row{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  border-radius:12px;padding:10px 16px;min-height:38px;
 }
-.mgr-stage-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:9px;}
-.mgr-stage-chip{display:flex;align-items:center;gap:6px;font-size:12.5px;color:rgba(31,31,31,.75);}
-.mgr-stage-chip b{color:var(--ink);}
-.mgr-stage-dot{width:9px;height:9px;border-radius:50%;flex:none;}
+.mgr-stage-row .lbl{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;}
+.mgr-stage-row .cnt{font-size:17px;font-weight:800;white-space:nowrap;}
 .mgr-stage-empty{font-size:12.5px;color:rgba(31,31,31,.4);padding:8px 0;}
 
 .otherwrap{display:none;margin-top:var(--gap);}
