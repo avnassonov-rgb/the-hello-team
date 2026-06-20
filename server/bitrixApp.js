@@ -123,21 +123,27 @@ function httpPostJSON(targetUrl, params) {
 }
 
 /* ---------------- установка приложения / токены ---------------- */
+// Bitrix24 шлёт данные установки (событие ONAPPINSTALL) в том же формате,
+// что и обычные события: токен лежит во вложенном блоке fields.auth, а не
+// в плоских полях AUTH_ID/REFRESH_ID — учитываем оба варианта на всякий случай.
 function handleInstallPost(fields) {
   console.log("[bitrix] /bitrix/install POST fields keys=" + Object.keys(fields || {}).join(","));
-  if (!fields || !fields.AUTH_ID) {
-    console.error("[bitrix] handleInstallPost: нет AUTH_ID в теле запроса — установка не сохранена");
+  const a = (fields && fields.auth) || {};
+  const accessToken = fields && (fields.AUTH_ID || a.access_token);
+  if (!fields || !accessToken) {
+    console.error("[bitrix] handleInstallPost: нет токена доступа в теле запроса (ни AUTH_ID, ни auth.access_token) — установка не сохранена");
     return null;
   }
   const existing = store.getBitrixApp() || {};
-  const domain = fields.DOMAIN || existing.domain;
-  const clientEndpoint = domain ? "https://" + domain + "/rest/" : existing.clientEndpoint;
+  const domain = fields.DOMAIN || a.domain || existing.domain;
+  const clientEndpoint = a.client_endpoint || (domain ? "https://" + domain + "/rest/" : existing.clientEndpoint);
+  const expiresIn = Number(fields.AUTH_EXPIRES || a.expires_in || 3600);
   const next = Object.assign({}, existing, {
-    accessToken: fields.AUTH_ID,
-    refreshToken: fields.REFRESH_ID || existing.refreshToken,
-    expiresAt: Date.now() + (Number(fields.AUTH_EXPIRES || 3600) - 60) * 1000,
+    accessToken: accessToken,
+    refreshToken: fields.REFRESH_ID || a.refresh_token || existing.refreshToken,
+    expiresAt: Date.now() + (expiresIn - 60) * 1000,
     domain: domain,
-    memberId: fields.member_id || existing.memberId,
+    memberId: fields.member_id || a.member_id || existing.memberId,
     clientEndpoint: clientEndpoint,
   });
   store.setBitrixApp(next);

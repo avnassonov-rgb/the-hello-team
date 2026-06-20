@@ -128,11 +128,12 @@ const server = http.createServer((req, res) => {
     if (req.method === "POST") {
       return readBodyForm(req, 1024 * 50, (err, fields) => {
         if (err) { console.error("[bitrix] /bitrix/install: ошибка разбора тела — " + err.message); }
-        if (!err && fields && fields.AUTH_ID) {
+        const hasToken = !err && fields && (fields.AUTH_ID || (fields.auth && fields.auth.access_token));
+        if (hasToken) {
           bitrixApp.handleInstallPost(fields);
           bitrixApp.bindEvents().catch((e) => console.error("[bitrix] bindEvents упал: " + e.message));
         } else if (!err) {
-          console.error("[bitrix] /bitrix/install POST без AUTH_ID, поля: " + JSON.stringify(fields));
+          console.error("[bitrix] /bitrix/install POST без токена доступа, поля: " + JSON.stringify(fields));
         }
         send(res, 200, INSTALL_HTML, { "Content-Type": "text/html; charset=utf-8" });
       });
