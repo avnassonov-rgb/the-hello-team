@@ -432,6 +432,37 @@
 
   function fmtMgrNum(n) { return (n || 0).toLocaleString("ru-RU"); }
 
+  function mgrSemanticClass(sem) {
+    if (sem === "S") return "ok";
+    if (sem === "F") return "fail";
+    return "mid";
+  }
+
+  function renderMgrFeed(events) {
+    if (!events || !events.length) {
+      return '<div class="mgr-feed-empty">Нет событий за выбранный период — нет назначенных карточек.</div>';
+    }
+    return '<div class="mgr-feed">' + events.map(function (e) {
+      var kind = e.entityType === "lead" ? "лид" : "сделка";
+      var action;
+      if (e.type === "created") {
+        action = "новая(ый) " + kind + " — этап: <span class=\"mgr-stage mgr-stage-" + mgrSemanticClass(e.semantic) + "\">" + E.esc(e.toStage || "—") + "</span>";
+      } else if (e.type === "deleted") {
+        action = kind.charAt(0).toUpperCase() + kind.slice(1) + " удалена(ён)";
+      } else {
+        action = kind.charAt(0).toUpperCase() + kind.slice(1) + " перемещена(ён): " +
+          "<span class=\"mgr-stage\">" + E.esc(e.fromStage || "—") + "</span>" +
+          " <span class=\"mgr-arrow\">→</span> " +
+          "<span class=\"mgr-stage mgr-stage-" + mgrSemanticClass(e.semantic) + "\">" + E.esc(e.toStage || "—") + "</span>";
+      }
+      var badge = e.real ? ' <span class="mgr-real" title="Точно: реальное событие из Bitrix24">●</span>' : "";
+      return '<div class="mgr-feed-item">' +
+        '<span class="mgr-feed-time">' + E.esc(e.timeLabel || "") + "</span>" +
+        '<span class="mgr-feed-text">' + action + badge + " <span class=\"mgr-feed-id\">#" + E.esc(e.entityId) + "</span></span>" +
+        "</div>";
+    }).join("") + "</div>";
+  }
+
   function renderManagersTable(report) {
     var msg = document.getElementById("managersMsg");
     var table = document.getElementById("managersTable");
@@ -444,16 +475,26 @@
       return;
     }
     table.classList.remove("hidden");
-    report.rows.forEach(function (r) {
-      var tr = el("tr", {});
+    report.rows.forEach(function (r, idx) {
+      var tr = el("tr", { "class": "mgr-row", "data-idx": idx });
       tr.innerHTML =
+        '<td class="mgr-chev"><svg class="icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l6 5-6 5"/></svg></td>' +
         "<td>" + E.esc(r.name) + "</td>" +
         '<td class="r">' + fmtMgrNum(r.createdDeals) + "</td>" +
         '<td class="r">' + fmtMgrNum(r.createdLeads) + "</td>" +
         '<td class="r">' + fmtMgrNum(r.movedDeals) + "</td>" +
         '<td class="r">' + fmtMgrNum(r.movedLeads) + "</td>" +
         '<td class="r" style="font-weight:700;">' + fmtMgrNum(r.created + r.moved) + "</td>";
+      var feedTr = el("tr", { "class": "mgr-feed-row hidden" });
+      var feedTd = el("td", { colspan: "7" }, renderMgrFeed(r.events));
+      feedTr.appendChild(feedTd);
+      tr.addEventListener("click", function () {
+        var isHidden = feedTr.classList.contains("hidden");
+        feedTr.classList.toggle("hidden");
+        tr.classList.toggle("open", isHidden);
+      });
       body.appendChild(tr);
+      body.appendChild(feedTr);
     });
     if (!report.hasUserNames) {
       msg.textContent = "Имена сотрудников не получены — у вебхука Bitrix24 нет прав «Пользователи». Показаны технические ID вместо имён.";
