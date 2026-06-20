@@ -22,6 +22,7 @@
         <button class="tab" data-tab="main">Главная</button>
         <button class="tab active" data-tab="plan">План производства</button>
         <button class="tab" data-tab="kaspi">Kaspi магазин</button>
+        <button class="tab" data-tab="managers">Менеджеры</button>
       </nav>
     </div>
     <div class="tr-center">
@@ -56,6 +57,34 @@
     <div class="empty-state">
       <h3>Kaspi магазин</h3>
       <p>Этот раздел в разработке.</p>
+    </div>
+  </section>
+
+  <section id="tab-managers" class="tabpanel hidden">
+    <div class="card">
+      <div class="plan-head">
+        <h2><span class="pill-tag"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> Эффективность менеджеров</span> <span class="sub">— данные из Bitrix24: сколько карточек создано и перемещено по каждому сотруднику</span></h2>
+      </div>
+      <div class="period-switch" id="periodSwitch">
+        <button class="pbtn active" data-period="today" type="button">Сегодня</button>
+        <button class="pbtn" data-period="yesterday" type="button">Вчера</button>
+        <button class="pbtn" data-period="week" type="button">Эта неделя</button>
+        <button class="pbtn" data-period="month" type="button">Этот месяц</button>
+      </div>
+      <div id="managersMsg" class="mgr-msg hidden"></div>
+      <table class="mgr-table hidden" id="managersTable">
+        <thead>
+          <tr>
+            <th>Менеджер</th>
+            <th class="r">Создано сделок</th>
+            <th class="r">Создано лидов</th>
+            <th class="r">Перемещено сделок</th>
+            <th class="r">Перемещено лидов</th>
+            <th class="r">Всего</th>
+          </tr>
+        </thead>
+        <tbody id="managersBody"></tbody>
+      </table>
     </div>
   </section>
 
