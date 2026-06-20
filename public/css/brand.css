@@ -32,7 +32,7 @@ body{
 a{color:inherit;}
 button{font-family:inherit;}
 .icon{width:1em;height:1em;display:inline-block;vertical-align:-0.14em;fill:currentColor;flex:none;}
-.wrap{max-width:1980px;margin:0 auto;padding:21px 60px 60px;}
+.wrap{max-width:1980px;margin:0 auto;padding:17px 60px 60px;}
 .hidden{display:none !important;}
 
 /* ---------- базовая карточка ---------- */
