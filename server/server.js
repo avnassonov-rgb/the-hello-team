@@ -98,15 +98,18 @@ const server = http.createServer((req, res) => {
     if (pathname === "/api/upload" && req.method === "POST") {
       return readBodyJSON(req, 30 * 1024 * 1024, (err, body) => {
         if (err) return sendJSON(res, 400, { ok: false, error: "bad_request" });
+        // Важно: загрузка файла 1 и файла 2 — это два РАЗНЫХ запроса.
+        // Если в текущем запросе поле не пришло — нельзя затирать его null'ом,
+        // нужно сохранить то, что уже лежит на сервере с предыдущей загрузки.
         const patch = {
-          ordersRaw: body.ordersRaw || null,
-          itemsRaw: body.itemsRaw || null,
           meta: {
             ordersFileName: body.ordersFileName || null,
             itemsFileName: body.itemsFileName || null,
             uploadedAt: new Date().toISOString(),
           },
         };
+        if (Object.prototype.hasOwnProperty.call(body, "ordersRaw")) patch.ordersRaw = body.ordersRaw || null;
+        if (Object.prototype.hasOwnProperty.call(body, "itemsRaw")) patch.itemsRaw = body.itemsRaw || null;
         const next = store.patchState(patch);
         sendJSON(res, 200, { ok: true, meta: next.meta });
       });
