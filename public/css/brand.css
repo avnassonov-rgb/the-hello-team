@@ -151,7 +151,7 @@ button{font-family:inherit;}
 .groupcard tr.sum td{font-weight:700;border-top:1px solid var(--line);padding-top:10px;}
 .groupcard.control .gh{background:transparent;}
 
-.otherwrap{margin-top:var(--gap);}
+.otherwrap{display:none;margin-top:var(--gap);}
 .otherwrap .card{padding:24px 30px;}
 .otherwrap .lbl{font-size:13px;color:rgba(31,31,31,.6);font-weight:600;margin-bottom:8px;}
 .otherwrap table{width:100%;border-collapse:collapse;font-size:13px;}
