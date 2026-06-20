@@ -426,6 +426,87 @@
     recomputeAndRender();
   }
 
+  /* ---------------- менеджеры (Bitrix24) ---------------- */
+  var managersLoaded = false;
+  var currentPeriod = "today";
+
+  function fmtMgrNum(n) { return (n || 0).toLocaleString("ru-RU"); }
+
+  function renderManagersTable(report) {
+    var msg = document.getElementById("managersMsg");
+    var table = document.getElementById("managersTable");
+    var body = document.getElementById("managersBody");
+    body.innerHTML = "";
+    if (!report.rows.length) {
+      msg.textContent = "За выбранный период нет данных по менеджерам.";
+      msg.classList.remove("hidden");
+      table.classList.add("hidden");
+      return;
+    }
+    table.classList.remove("hidden");
+    report.rows.forEach(function (r) {
+      var tr = el("tr", {});
+      tr.innerHTML =
+        "<td>" + E.esc(r.name) + "</td>" +
+        '<td class="r">' + fmtMgrNum(r.createdDeals) + "</td>" +
+        '<td class="r">' + fmtMgrNum(r.createdLeads) + "</td>" +
+        '<td class="r">' + fmtMgrNum(r.movedDeals) + "</td>" +
+        '<td class="r">' + fmtMgrNum(r.movedLeads) + "</td>" +
+        '<td class="r" style="font-weight:700;">' + fmtMgrNum(r.created + r.moved) + "</td>";
+      body.appendChild(tr);
+    });
+    if (!report.hasUserNames) {
+      msg.textContent = "Имена сотрудников не получены — у вебхука Bitrix24 нет прав «Пользователи». Показаны технические ID вместо имён.";
+      msg.classList.remove("hidden");
+    } else {
+      msg.classList.add("hidden");
+    }
+  }
+
+  function loadManagersReport(period) {
+    currentPeriod = period;
+    var msg = document.getElementById("managersMsg");
+    var table = document.getElementById("managersTable");
+    msg.textContent = "Загрузка данных из Bitrix24…";
+    msg.classList.remove("hidden");
+    table.classList.add("hidden");
+    fetch("/api/bitrix/report?period=" + encodeURIComponent(period))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) {
+          msg.textContent = (j && j.message) || "Не удалось получить данные из Bitrix24.";
+          msg.classList.remove("hidden");
+          table.classList.add("hidden");
+          return;
+        }
+        renderManagersTable(j.report);
+      })
+      .catch(function () {
+        msg.textContent = "Ошибка соединения с сервером.";
+        msg.classList.remove("hidden");
+        table.classList.add("hidden");
+      });
+  }
+
+  function initManagersTab() {
+    $all("#periodSwitch .pbtn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        $all("#periodSwitch .pbtn").forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        loadManagersReport(btn.getAttribute("data-period"));
+      });
+    });
+    var tabBtn = document.querySelector('.tab[data-tab="managers"]');
+    if (tabBtn) {
+      tabBtn.addEventListener("click", function () {
+        if (!managersLoaded) {
+          managersLoaded = true;
+          loadManagersReport(currentPeriod);
+        }
+      });
+    }
+  }
+
   /* ---------------- инициализация ---------------- */
   function init() {
     initTabs();
@@ -433,6 +514,7 @@
     initUploads();
     initControlButtons();
     initPrintButtons();
+    initManagersTab();
 
     fetch("/api/me").then(function (r) { return r.json(); }).then(function (me) {
       if (!me.authed) { window.location.href = "/login.html"; return; }
