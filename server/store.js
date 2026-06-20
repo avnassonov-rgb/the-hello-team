@@ -18,7 +18,55 @@ const DEFAULT_STATE = {
   settings: null, // null => клиент возьмёт Engine.DEFAULT_SETTINGS
   control: null, // null => клиент возьмёт Engine.DEFAULT_CONTROL
   meta: { ordersFileName: null, itemsFileName: null, uploadedAt: null },
+  // ---- Bitrix24: локальное приложение для точной атрибуции событий ----
+  bitrixApp: null, // { accessToken, refreshToken, expiresAt, domain, memberId, clientEndpoint }
+  bitrixEvents: [], // [{ time, entityType, entityId, type, fromStage, toStage, actorId, actorName }]
+  bitrixStageCache: {}, // "deal:123" -> текущий STAGE_ID/STATUS_ID, известный с прошлого события
 };
+
+const MAX_BITRIX_EVENTS = 5000;
+
+function bitrixCacheKey(entityType, entityId) {
+  return entityType + ":" + entityId;
+}
+
+function getBitrixApp() {
+  return readState().bitrixApp || null;
+}
+function setBitrixApp(data) {
+  return patchState({ bitrixApp: data });
+}
+
+function appendBitrixEvent(ev) {
+  const state = readState();
+  const list = Array.isArray(state.bitrixEvents) ? state.bitrixEvents.slice() : [];
+  list.push(ev);
+  while (list.length > MAX_BITRIX_EVENTS) list.shift();
+  return patchState({ bitrixEvents: list });
+}
+function getBitrixEvents() {
+  const state = readState();
+  return Array.isArray(state.bitrixEvents) ? state.bitrixEvents : [];
+}
+
+function getCachedStage(entityType, entityId) {
+  const state = readState();
+  const cache = state.bitrixStageCache || {};
+  const v = cache[bitrixCacheKey(entityType, entityId)];
+  return v == null ? null : v;
+}
+function setCachedStage(entityType, entityId, stageId) {
+  const state = readState();
+  const cache = Object.assign({}, state.bitrixStageCache || {});
+  cache[bitrixCacheKey(entityType, entityId)] = stageId;
+  return patchState({ bitrixStageCache: cache });
+}
+function deleteCachedStage(entityType, entityId) {
+  const state = readState();
+  const cache = Object.assign({}, state.bitrixStageCache || {});
+  delete cache[bitrixCacheKey(entityType, entityId)];
+  return patchState({ bitrixStageCache: cache });
+}
 
 function readState() {
   ensureDir();
@@ -46,4 +94,9 @@ function patchState(patch) {
   return next;
 }
 
-module.exports = { readState, writeState, patchState, DATA_DIR, STATE_FILE };
+module.exports = {
+  readState, writeState, patchState, DATA_DIR, STATE_FILE,
+  getBitrixApp, setBitrixApp,
+  appendBitrixEvent, getBitrixEvents,
+  getCachedStage, setCachedStage, deleteCachedStage,
+};
