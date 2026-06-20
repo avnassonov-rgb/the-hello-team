@@ -12,7 +12,7 @@
   --muted:#8A8A8A;
   --faint:#A6A4A4;
   --line:#ECECEC;
-  --radius:22px;
+  --radius:24px;
   --radius-sm:14px;
   --shadow:0 10px 30px rgba(0,0,0,.06);
 }
@@ -85,9 +85,10 @@ button{font-family:inherit;}
 .pill-tag{
   display:inline-flex;align-items:center;gap:7px;background:#fff;border-radius:999px;
   padding:9px 18px;font-weight:600;font-size:14.5px;box-shadow:var(--shadow);
+  border:1px solid var(--line);color:var(--ink);
 }
-.pill-tag.dark{background:var(--ink);color:#fff;}
-.pill-tag.pink{background:var(--pink);color:#fff;}
+.pill-tag.dark{background:var(--ink);color:#fff;border:none;}
+.pill-tag.pink{background:var(--pink);color:#fff;border:none;}
 .pill-stat{background:#F4F3F4;border-radius:999px;padding:6px 14px;font-size:11.5px;color:var(--muted);font-weight:600;}
 
 .bignum{font-size:52px;font-weight:800;letter-spacing:-.02em;line-height:1;}
