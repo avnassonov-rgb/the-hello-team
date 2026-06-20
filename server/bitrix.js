@@ -142,8 +142,12 @@ async function getUsers(webhookUrl) {
 // Названия стадий сделок зависят от воронки (направления продаж).
 // crm.status.list с ENTITY_ID="DEAL_STAGE" — стадии основной воронки,
 // "DEAL_STAGE_<ID>" — стадии дополнительных воронок (crm.dealcategory.list).
+// Возвращает { names, colors } — названия и цвета этапов (цвет — как в канбане
+// Bitrix24, поле COLOR у crm.status.list), чтобы визуально оформить разделы
+// тем же цветом, что в самом Bitrix24.
 async function getDealStageNames(webhookUrl) {
-  const map = {};
+  const names = {};
+  const colors = {};
   try {
     let categories = [];
     try {
@@ -158,25 +162,32 @@ async function getDealStageNames(webhookUrl) {
     ));
     lists.forEach((data) => {
       (Array.isArray(data.result) ? data.result : []).forEach((s) => {
-        if (s && s.STATUS_ID) map[s.STATUS_ID] = s.NAME || s.STATUS_ID;
+        if (s && s.STATUS_ID) {
+          names[s.STATUS_ID] = s.NAME || s.STATUS_ID;
+          if (s.COLOR) colors[s.STATUS_ID] = s.COLOR;
+        }
       });
     });
   } catch (e) {
     // если что-то не получилось — просто покажем сырые коды этапов вместо названий
   }
-  return map;
+  return { names, colors };
 }
 
 async function getLeadStatusNames(webhookUrl) {
   try {
     const data = await callMethod(webhookUrl, "crm.status.list", { filter: { ENTITY_ID: "STATUS" } });
-    const map = {};
+    const names = {};
+    const colors = {};
     (Array.isArray(data.result) ? data.result : []).forEach((s) => {
-      if (s && s.STATUS_ID) map[s.STATUS_ID] = s.NAME || s.STATUS_ID;
+      if (s && s.STATUS_ID) {
+        names[s.STATUS_ID] = s.NAME || s.STATUS_ID;
+        if (s.COLOR) colors[s.STATUS_ID] = s.COLOR;
+      }
     });
-    return map;
+    return { names, colors };
   } catch (e) {
-    return {};
+    return { names: {}, colors: {} };
   }
 }
 
@@ -258,13 +269,15 @@ async function getManagerReport(webhookUrl, period) {
   const range = periodRange(period);
   const { from, to } = range;
 
-  const [users, dealStageNames, leadStatusNames, dealHistory, leadHistory] = await Promise.all([
+  const [users, dealStageInfo, leadStatusInfo, dealHistory, leadHistory] = await Promise.all([
     getUsers(webhookUrl),
     getDealStageNames(webhookUrl),
     getLeadStatusNames(webhookUrl),
     fetchStageHistory(webhookUrl, 2, from, to),
     fetchStageHistory(webhookUrl, 1, from, to),
   ]);
+  const dealStageNames = dealStageInfo.names, dealStageColors = dealStageInfo.colors;
+  const leadStatusNames = leadStatusInfo.names, leadStatusColors = leadStatusInfo.colors;
 
   const dealDerived = deriveTransitions(dealHistory);
   const leadDerived = deriveTransitions(leadHistory);
@@ -300,6 +313,7 @@ async function getManagerReport(webhookUrl, period) {
       type: e.type,
       fromStage: stageName(dealStageNames, e.fromStage),
       toStage: stageName(dealStageNames, e.toStage),
+      toStageColor: e.toStage != null ? (dealStageColors[e.toStage] || null) : null,
       semantic: e.semantic,
       managerId: dealAssigneeMap[e.ownerId] != null ? String(dealAssigneeMap[e.ownerId]) : null,
     });
@@ -313,6 +327,7 @@ async function getManagerReport(webhookUrl, period) {
       type: e.type,
       fromStage: stageName(leadStatusNames, e.fromStage),
       toStage: stageName(leadStatusNames, e.toStage),
+      toStageColor: e.toStage != null ? (leadStatusColors[e.toStage] || null) : null,
       semantic: e.semantic,
       managerId: leadAssigneeMap[e.ownerId] != null ? String(leadAssigneeMap[e.ownerId]) : null,
     });
@@ -330,6 +345,7 @@ async function getManagerReport(webhookUrl, period) {
   const approxFiltered = allEvents.filter((e) => !realKeys.has(e.entityType + ":" + e.entityId));
   const realEvents = realRaw.map((e) => {
     const namesMap = e.entityType === "lead" ? leadStatusNames : dealStageNames;
+    const colorsMap = e.entityType === "lead" ? leadStatusColors : dealStageColors;
     return {
       time: e.time,
       timeLabel: fmtLocalDateTime(e.time),
@@ -338,6 +354,7 @@ async function getManagerReport(webhookUrl, period) {
       type: e.type,
       fromStage: stageName(namesMap, e.fromStage),
       toStage: stageName(namesMap, e.toStage),
+      toStageColor: e.toStage != null ? (colorsMap[e.toStage] || null) : null,
       semantic: null,
       managerId: e.actorId || null,
       managerName: e.actorName || null,
@@ -347,23 +364,46 @@ async function getManagerReport(webhookUrl, period) {
   const merged = approxFiltered.concat(realEvents);
   merged.sort((a, b) => new Date(b.time) - new Date(a.time));
 
+  // Разбивка по этапам (для визуала): на какой именно этап карточки попали
+  // при создании / перемещении, с цветом этапа из Bitrix24 (если известен).
+  function bumpStage(bucket, stageLabel, color) {
+    if (!stageLabel) return;
+    const key = stageLabel;
+    const entry = (bucket[key] = bucket[key] || { count: 0, color: null });
+    entry.count++;
+    if (!entry.color && color) entry.color = color;
+  }
+  function stageBucketToArray(bucket) {
+    return Object.keys(bucket)
+      .map((k) => ({ stage: k, count: bucket[k].count, color: bucket[k].color || null }))
+      .sort((a, b) => b.count - a.count);
+  }
+
   const byManager = {};
   merged.forEach((e) => {
     if (e.managerId == null) return;
-    const m = (byManager[e.managerId] = byManager[e.managerId] || { events: [], createdDeals: 0, createdLeads: 0, movedDeals: 0, movedLeads: 0, name: null });
+    const m = (byManager[e.managerId] = byManager[e.managerId] || {
+      events: [], createdDeals: 0, createdLeads: 0, movedDeals: 0, movedLeads: 0, name: null,
+      createdByStage: {}, movedByStage: {},
+    });
     if (m.events.length < MAX_EVENTS_PER_MANAGER) m.events.push(e);
     if (e.managerName && !m.name) m.name = e.managerName;
     if (e.type === "created" && e.entityType === "deal") m.createdDeals++;
     if (e.type === "created" && e.entityType === "lead") m.createdLeads++;
     if (e.type === "moved" && e.entityType === "deal") m.movedDeals++;
     if (e.type === "moved" && e.entityType === "lead") m.movedLeads++;
+    if (e.type === "created") bumpStage(m.createdByStage, e.toStage, e.toStageColor);
+    if (e.type === "moved") bumpStage(m.movedByStage, e.toStage, e.toStageColor);
   });
 
   // показываем и активных сотрудников без единого события за период — так видно,
   // что у них просто не было назначенных карточек (а не что отчёт их "потерял").
   const ids = uniq(Object.keys(byManager).concat(Object.keys(users)));
   const rows = ids.map((id) => {
-    const m = byManager[id] || { events: [], createdDeals: 0, createdLeads: 0, movedDeals: 0, movedLeads: 0, name: null };
+    const m = byManager[id] || {
+      events: [], createdDeals: 0, createdLeads: 0, movedDeals: 0, movedLeads: 0, name: null,
+      createdByStage: {}, movedByStage: {},
+    };
     return {
       id: id,
       name: users[id] || m.name || ("Пользователь #" + id),
@@ -373,6 +413,8 @@ async function getManagerReport(webhookUrl, period) {
       movedDeals: m.movedDeals,
       movedLeads: m.movedLeads,
       moved: m.movedDeals + m.movedLeads,
+      createdByStage: stageBucketToArray(m.createdByStage),
+      movedByStage: stageBucketToArray(m.movedByStage),
       events: m.events,
     };
   });
