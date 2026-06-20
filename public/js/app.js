@@ -232,13 +232,7 @@
     document.getElementById("printPlanBtn").addEventListener("click", function () {
       document.getElementById("printDate").textContent = "Дата печати: " + fmtDateTime(new Date().toISOString());
       document.body.classList.add("print-plan");
-      injectPageStyle("landscape");
-      window.print();
-    });
-    document.getElementById("printAllBtn").addEventListener("click", function () {
-      document.getElementById("printDate").textContent = "Дата печати: " + fmtDateTime(new Date().toISOString());
-      document.body.classList.remove("print-plan");
-      removePageStyle();
+      injectPageStyle("portrait");
       window.print();
     });
     window.addEventListener("afterprint", function () {
@@ -290,9 +284,9 @@
       var pinkPct = total ? ((total - fire) / total) * 100 : 0;
       var darkPct = total ? (fire / total) * 100 : 0;
       var row = el("div", { class: "barrow" });
-      row.appendChild(el("div", { class: "lbl" }, c.label));
-      var track = el("div", { class: "bartrack" });
-      var inner = el("div", { style: "display:flex;width:" + widthPct + "%;height:100%;" });
+      var track = el("div", { class: "bartrack" + (total ? "" : " is-empty") });
+      track.appendChild(el("div", { class: "bar-label" }, c.label));
+      var inner = el("div", { class: "bar-inner", style: "width:" + widthPct + "%;" });
       if (total - fire > 0) {
         var pf = el("div", { class: "barfill pink", style: "width:" + pinkPct + "%;" });
         pf.appendChild(el("span", { class: "n" }, String(total - fire)));
@@ -346,16 +340,15 @@
     var html = "";
     html += '<div class="gh"><span class="pill-tag pink">неснижаемый остаток (контроль)</span>' +
       '<span class="pill-stat">' + control.length + ' позиц</span></div>';
-    html += '<table><thead><tr><th>наименование</th><th class="r">норма</th><th class="r">в плане</th><th class="f">факт</th></tr></thead><tbody>';
+    html += '<table><thead><tr><th>наименование</th><th class="r">кол-во</th></tr></thead><tbody>';
     if (!control.length) {
-      html += '<tr><td colspan="4" class="empty-row">список пуст — добавьте позиции в настройках выше</td></tr>';
+      html += '<tr><td colspan="2" class="empty-row">список пуст — добавьте позиции в настройках выше</td></tr>';
     } else {
       control.forEach(function (c) {
         var inPlan = controlMatch(c.name, allPlanFlat);
         var deficit = Math.max(0, (c.norm || 0) - inPlan);
-        var planCell = E.fmtNum(inPlan) + (deficit > 0 ? ' <span style="color:var(--pink-dark);font-weight:700;">(−' + E.fmtNum(deficit) + ')</span>' : "");
-        html += '<tr><td>' + E.esc(c.name) + '</td><td class="r q">' + E.fmtNum(c.norm || 0) + '</td>' +
-          '<td class="r t">' + planCell + '</td><td class="f"></td></tr>';
+        var qtyCell = E.fmtNum(c.norm || 0) + (deficit > 0 ? ' <span style="color:var(--pink-dark);font-weight:700;">(не хватает ' + E.fmtNum(deficit) + ')</span>' : "");
+        html += '<tr><td>' + E.esc(c.name) + '</td><td class="r q">' + qtyCell + '</td></tr>';
       });
     }
     html += '</tbody></table>';
@@ -365,11 +358,13 @@
   function renderPlanGrid() {
     var grid = document.getElementById("planGrid");
     grid.innerHTML = "";
-    for (var i = 0; i < 4; i++) {
-      var card = el("div", { class: "card groupcard" }, groupCardHTML(i));
+    // визуальный порядок по макету: жидкое мыло, посуда и пол, прочее (1 ряд), твёрдое мыло (2 ряд)
+    var order = [2, 1, 3, 0];
+    order.forEach(function (i) {
+      var card = el("div", { class: "groupcard" }, groupCardHTML(i));
       grid.appendChild(card);
-    }
-    var ctrl = el("div", { class: "card groupcard control" }, controlCardHTML());
+    });
+    var ctrl = el("div", { class: "groupcard control" }, controlCardHTML());
     grid.appendChild(ctrl);
   }
 
@@ -391,12 +386,11 @@
     var cls = "order" + (o.fire ? " fire" : "");
     var html = '<div class="' + cls + '">';
     html += '<div class="r1"><div><span class="onum">№' + E.esc(o.number) + '</span><span class="odate">' + E.fmtDate(o.date) + '</span></div>' +
-      '<div class="osum">' + E.fmtMoney(o.sum) + ' ₸</div></div>';
-    if (o.contr) html += '<div class="shopname">' + E.esc(o.contr) + '</div>';
+      '<div class="osum">' + E.fmtMoney(o.sum) + 'Т</div></div>';
     if (items.length) {
       html += '<div class="items">';
       items.slice(0, 4).forEach(function (it) {
-        html += '<div class="item"><span>' + E.esc(it.product) + '</span><span class="qty">' + E.fmtNum(it.qty) + '</span></div>';
+        html += '<div class="item"><span>' + E.esc(it.product) + '</span><span class="qty">' + E.fmtNum(it.qty) + ' шт</span></div>';
       });
       if (items.length > 4) html += '<div class="item"><span>+' + (items.length - 4) + ' ещё позиций…</span><span></span></div>';
       html += '</div>';

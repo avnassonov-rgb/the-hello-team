@@ -39,7 +39,7 @@
   }
 
   const fmtNum = (n) => (Math.round(n * 100) / 100).toLocaleString("ru-RU");
-  const fmtT = (n) => (Math.round(n * 1000) / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 3 });
+  const fmtT = (n) => (Math.round(n * 10) / 10).toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const fmtMoney = (n) => Math.round(n).toLocaleString("ru-RU");
   const fmtDate = (d) => (d ? d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" }) : "—");
   const daysSince = (d, now) => (d ? Math.floor(((now || new Date()).getTime() - d.getTime()) / 86400000) : null);
