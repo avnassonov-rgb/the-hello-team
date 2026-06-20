@@ -124,11 +124,15 @@ const server = http.createServer((req, res) => {
   // Эти запросы шлёт сам Bitrix24, без нашей куки авторизации — поэтому
   // они вынесены за пределы блока /api/, где требуется логин.
   if (pathname === "/bitrix/install" && (req.method === "GET" || req.method === "POST")) {
+    console.log("[bitrix] /bitrix/install " + req.method + " получен");
     if (req.method === "POST") {
       return readBodyForm(req, 1024 * 50, (err, fields) => {
+        if (err) { console.error("[bitrix] /bitrix/install: ошибка разбора тела — " + err.message); }
         if (!err && fields && fields.AUTH_ID) {
           bitrixApp.handleInstallPost(fields);
-          bitrixApp.bindEvents().catch(() => {});
+          bitrixApp.bindEvents().catch((e) => console.error("[bitrix] bindEvents упал: " + e.message));
+        } else if (!err) {
+          console.error("[bitrix] /bitrix/install POST без AUTH_ID, поля: " + JSON.stringify(fields));
         }
         send(res, 200, INSTALL_HTML, { "Content-Type": "text/html; charset=utf-8" });
       });
@@ -137,8 +141,10 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === "/bitrix/event" && req.method === "POST") {
     return readBodyForm(req, 1024 * 100, (err, fields) => {
-      if (!err && fields) {
-        bitrixApp.handleEvent(fields).catch(() => {});
+      if (err) {
+        console.error("[bitrix] /bitrix/event: ошибка разбора тела — " + err.message);
+      } else if (fields) {
+        bitrixApp.handleEvent(fields).catch((e) => console.error("[bitrix] handleEvent упал: " + e.message));
       }
       send(res, 200, "ok"); // всегда 200, иначе Bitrix24 будет повторять доставку
     });

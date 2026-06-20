@@ -124,7 +124,11 @@ function httpPostJSON(targetUrl, params) {
 
 /* ---------------- установка приложения / токены ---------------- */
 function handleInstallPost(fields) {
-  if (!fields || !fields.AUTH_ID) return null;
+  console.log("[bitrix] /bitrix/install POST fields keys=" + Object.keys(fields || {}).join(","));
+  if (!fields || !fields.AUTH_ID) {
+    console.error("[bitrix] handleInstallPost: нет AUTH_ID в теле запроса — установка не сохранена");
+    return null;
+  }
   const existing = store.getBitrixApp() || {};
   const domain = fields.DOMAIN || existing.domain;
   const clientEndpoint = domain ? "https://" + domain + "/rest/" : existing.clientEndpoint;
@@ -137,6 +141,7 @@ function handleInstallPost(fields) {
     clientEndpoint: clientEndpoint,
   });
   store.setBitrixApp(next);
+  console.log("[bitrix] handleInstallPost: токены сохранены, domain=" + domain + " clientEndpoint=" + clientEndpoint);
   return next;
 }
 
@@ -180,7 +185,10 @@ async function callAppMethod(method, params) {
     const refreshed = await refreshAccessToken();
     data = await httpPostJSON(url, Object.assign({}, params, { auth: refreshed.accessToken }));
   }
-  if (data && data.error) throw new Error("Bitrix24 [" + method + "]: " + (data.error_description || data.error));
+  if (data && data.error) {
+    console.error("[bitrix] callAppMethod " + method + " error: " + (data.error_description || data.error));
+    throw new Error("Bitrix24 [" + method + "]: " + (data.error_description || data.error));
+  }
   return data;
 }
 
@@ -191,28 +199,34 @@ async function bindEvents() {
     const evt = EVENTS_TO_BIND[i];
     try {
       const res = await callAppMethod("event.bind", { event: evt, handler: handler });
-      results.push({ event: evt, ok: !(res && res.error) });
+      results.push({ event: evt, ok: !(res && res.error), raw: res });
     } catch (e) {
       results.push({ event: evt, ok: false, error: e.message });
     }
   }
+  console.log("[bitrix] bindEvents handler=" + handler + " results=" + JSON.stringify(results));
   return results;
 }
 
 /* ---------------- приём событий ---------------- */
 async function resolveActor(authBlock) {
-  if (!authBlock || !authBlock.access_token) return null;
+  if (!authBlock || !authBlock.access_token) {
+    console.error("[bitrix] resolveActor: в событии нет auth.access_token — " + (authBlock ? JSON.stringify(Object.keys(authBlock)) : "auth отсутствует совсем"));
+    return null;
+  }
   try {
     const app = store.getBitrixApp();
     const endpoint = (app && app.clientEndpoint) || (authBlock.domain ? "https://" + authBlock.domain + "/rest/" : null);
-    if (!endpoint) return null;
+    if (!endpoint) { console.error("[bitrix] resolveActor: не удалось определить endpoint"); return null; }
     const data = await httpPostJSON(endpoint + "user.current.json", { auth: authBlock.access_token });
     if (data && data.result) {
       const u = data.result;
+      console.log("[bitrix] resolveActor: автор = " + u.ID + " " + u.NAME + " " + u.LAST_NAME);
       return { id: String(u.ID), name: ((u.NAME || "") + " " + (u.LAST_NAME || "")).trim() || ("Пользователь #" + u.ID) };
     }
+    console.error("[bitrix] resolveActor: user.current вернул без result: " + JSON.stringify(data));
   } catch (e) {
-    // не получилось определить автора точно — событие всё равно зафиксируем, просто без привязки
+    console.error("[bitrix] resolveActor: ошибка — " + e.message);
   }
   return null;
 }
@@ -220,10 +234,11 @@ async function resolveActor(authBlock) {
 async function handleEvent(parsed) {
   const eventName = String((parsed && parsed.event) || "").toUpperCase();
   const meta = ENTITY_MAP[eventName];
-  if (!meta) return { ok: false, skipped: true, reason: "unknown_event" };
+  console.log("[bitrix] /bitrix/event получено: event=" + eventName + " hasAuth=" + !!(parsed && parsed.auth && parsed.auth.access_token));
+  if (!meta) { console.error("[bitrix] handleEvent: неизвестное событие " + eventName); return { ok: false, skipped: true, reason: "unknown_event" }; }
 
   const entityId = parsed.data && parsed.data.FIELDS && parsed.data.FIELDS.ID;
-  if (!entityId) return { ok: false, skipped: true, reason: "no_id" };
+  if (!entityId) { console.error("[bitrix] handleEvent: нет ID карточки в событии " + eventName); return { ok: false, skipped: true, reason: "no_id" }; }
 
   const actor = await resolveActor(parsed.auth);
   const now = new Date().toISOString();
@@ -245,12 +260,14 @@ async function handleEvent(parsed) {
     const data = await callAppMethod(method, { id: entityId });
     entity = data && data.result;
   } catch (e) {
+    console.error("[bitrix] handleEvent: не удалось получить карточку " + meta.type + " #" + entityId + " — " + e.message);
     entity = null;
   }
   const currentStage = entity ? entity[stageField] : null;
 
   if (meta.action === "add") {
     if (currentStage != null) store.setCachedStage(meta.type, entityId, currentStage);
+    console.log("[bitrix] handleEvent: created " + meta.type + " #" + entityId + " stage=" + currentStage + " actor=" + (actor ? actor.id + " " + actor.name : "null"));
     store.appendBitrixEvent({
       time: now, entityType: meta.type, entityId: String(entityId), type: "created",
       fromStage: null, toStage: currentStage,
@@ -261,12 +278,15 @@ async function handleEvent(parsed) {
 
   // update — сравниваем с последним известным этапом, чтобы понять, было ли это перемещение
   const prevStage = store.getCachedStage(meta.type, entityId);
+  console.log("[bitrix] handleEvent: update " + meta.type + " #" + entityId + " prevStage=" + prevStage + " currentStage=" + currentStage + " actor=" + (actor ? actor.id + " " + actor.name : "null"));
   if (currentStage != null && prevStage != null && String(currentStage) !== String(prevStage)) {
     store.appendBitrixEvent({
       time: now, entityType: meta.type, entityId: String(entityId), type: "moved",
       fromStage: prevStage, toStage: currentStage,
       actorId: actor ? actor.id : null, actorName: actor ? actor.name : null,
     });
+  } else {
+    console.log("[bitrix] handleEvent: изменений этапа не обнаружено (либо prevStage не был закэширован) — событие 'moved' не записано");
   }
   if (currentStage != null) store.setCachedStage(meta.type, entityId, currentStage);
   return { ok: true };
