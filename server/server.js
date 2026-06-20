@@ -8,6 +8,7 @@ const path = require("path");
 const url = require("url");
 const store = require("./store");
 const auth = require("./auth");
+const bitrix = require("./bitrix");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const PORT = process.env.PORT || 3000;
@@ -127,6 +128,18 @@ const server = http.createServer((req, res) => {
         store.patchState({ control: body });
         sendJSON(res, 200, { ok: true });
       });
+    }
+    if (pathname === "/api/bitrix/report" && req.method === "GET") {
+      const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
+      if (!webhookUrl) {
+        return sendJSON(res, 200, { ok: false, error: "no_webhook", message: "Вебхук Bitrix24 не настроен. Задайте переменную окружения BITRIX_WEBHOOK_URL в настройках Render." });
+      }
+      const allowedPeriods = ["today", "yesterday", "week", "month"];
+      let period = parsed.query && parsed.query.period;
+      if (allowedPeriods.indexOf(period) === -1) period = "today";
+      return bitrix.getManagerReport(webhookUrl, period)
+        .then((report) => sendJSON(res, 200, { ok: true, report: report }))
+        .catch((err) => sendJSON(res, 200, { ok: false, error: "bitrix_error", message: err.message }));
     }
     return sendJSON(res, 404, { ok: false, error: "not_found" });
   }
