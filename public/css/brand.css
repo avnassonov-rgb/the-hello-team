@@ -152,6 +152,11 @@ button{font-family:inherit;}
 .groupcard.control .gh{background:transparent;}
 
 /* ---------- вкладка «Менеджеры» (Bitrix24) ---------- */
+.mgr-note{
+  background:rgba(31,31,31,.04);border-radius:12px;padding:12px 16px;margin-bottom:18px;
+  font-size:13px;line-height:1.5;color:rgba(31,31,31,.65);
+}
+.mgr-real{color:#2e7d32;font-size:11px;}
 .period-switch{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px;}
 .pbtn{
   border:1px solid var(--outline);background:transparent;color:var(--ink);
@@ -169,7 +174,30 @@ button{font-family:inherit;}
 .mgr-table thead th.r{text-align:right;}
 .mgr-table td{padding:10px 0;font-size:14px;color:var(--ink);border-bottom:1px solid var(--line);vertical-align:middle;}
 .mgr-table td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
-.mgr-table tr:last-child td{border-bottom:none;}
+.mgr-table tbody tr:last-child td{border-bottom:none;}
+
+.mgr-row{cursor:pointer;transition:background .12s;}
+.mgr-row:hover{background:rgba(31,31,31,.04);}
+.mgr-row .mgr-chev{width:20px;color:rgba(31,31,31,.45);}
+.mgr-row .mgr-chev .icon{width:14px;height:14px;display:block;transition:transform .15s;}
+.mgr-row.open .mgr-chev .icon{transform:rotate(90deg);}
+.mgr-row.open{background:rgba(31,31,31,.04);}
+
+.mgr-feed-row td{padding:0;border-bottom:1px solid var(--line);}
+.mgr-feed-row.hidden{display:none;}
+.mgr-feed{padding:6px 0 14px 28px;display:flex;flex-direction:column;gap:9px;max-height:360px;overflow-y:auto;}
+.mgr-feed-empty{padding:14px 0 14px 28px;color:rgba(31,31,31,.5);font-size:13px;}
+.mgr-feed-item{display:flex;gap:12px;font-size:13px;line-height:1.5;align-items:baseline;}
+.mgr-feed-time{flex:none;width:72px;color:rgba(31,31,31,.45);font-variant-numeric:tabular-nums;}
+.mgr-feed-text{color:var(--ink);}
+.mgr-feed-id{color:rgba(31,31,31,.4);font-size:12px;}
+.mgr-stage{
+  display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;
+  background:rgba(31,31,31,.08);color:var(--ink);
+}
+.mgr-stage-ok{background:rgba(34,160,90,.14);color:#1d8a4d;}
+.mgr-stage-fail{background:rgba(214,58,58,.14);color:#c23a3a;}
+.mgr-arrow{color:rgba(31,31,31,.4);}
 
 .otherwrap{display:none;margin-top:var(--gap);}
 .otherwrap .card{padding:24px 30px;}
