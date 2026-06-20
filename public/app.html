@@ -88,21 +88,6 @@
         </div>
       </div>
 
-      <details class="panel no-print">
-        <summary><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> Настройки расчёта (категории, ключевые слова, горящие заказы)</summary>
-        <div class="panel-body" id="settingsBody"></div>
-      </details>
-
-      <details class="panel no-print">
-        <summary><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5l-8-3z"/></svg> Неснижаемый остаток — список контроля (<span id="controlCount">0</span> позиций)</summary>
-        <div class="panel-body">
-          <div class="chead"><div class="h1">Наименование</div><div class="h2">Норма, шт</div><div class="h3"></div></div>
-          <div id="controlRows"></div>
-          <button class="btn btn-ghost" id="addControlBtn" type="button" style="margin-top:8px;">+ Добавить позицию</button>
-          <div style="margin-top:14px;"><button class="btn btn-pink" id="saveControlBtn" type="button">Сохранить список</button></div>
-        </div>
-      </details>
-
       <div class="card">
         <div class="plan-head">
           <h2><span class="pill-tag"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> План производства</span> <span class="sub">— сколько необходимо продукции, чтобы закрыть неотгруженные заказы</span></h2>
@@ -132,6 +117,21 @@
           <div class="orderlist" id="catOther"></div>
         </div>
       </div>
+
+      <details class="panel no-print" style="margin-top:var(--gap);">
+        <summary><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> Настройки расчёта (категории, ключевые слова, горящие заказы)</summary>
+        <div class="panel-body" id="settingsBody"></div>
+      </details>
+
+      <details class="panel no-print">
+        <summary><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5l-8-3z"/></svg> Неснижаемый остаток — список контроля (<span id="controlCount">0</span> позиций)</summary>
+        <div class="panel-body">
+          <div class="chead"><div class="h1">Наименование</div><div class="h2">Норма, шт</div><div class="h3"></div></div>
+          <div id="controlRows"></div>
+          <button class="btn btn-ghost" id="addControlBtn" type="button" style="margin-top:8px;">+ Добавить позицию</button>
+          <div style="margin-top:14px;"><button class="btn btn-pink" id="saveControlBtn" type="button">Сохранить список</button></div>
+        </div>
+      </details>
 
       <div class="banner-wrap no-print" style="margin-top:var(--gap);">
         <img class="banner-img" src="/img/banner.png" alt="THE HELLO Team">
