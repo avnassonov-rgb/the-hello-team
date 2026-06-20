@@ -9,6 +9,36 @@ const url = require("url");
 const store = require("./store");
 const auth = require("./auth");
 const bitrix = require("./bitrix");
+const bitrixApp = require("./bitrixApp");
+
+const INSTALL_HTML = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
+  "<title>THE HELLO — установка приложения</title></head>" +
+  "<body style=\"font-family:sans-serif;padding:40px;text-align:center;color:#1F1F1F;\">" +
+  "<p id=\"thStatus\">Подключение приложения...</p>" +
+  "<script src=\"//api.bitrix24.com/api/v1/\"></script>" +
+  "<script>" +
+  "try{if(window.BX24){BX24.init(function(){BX24.installFinish();document.getElementById('thStatus').textContent='Готово. Можно закрыть это окно.';});}" +
+  "else{document.getElementById('thStatus').textContent='Готово. Можно закрыть это окно.';}}" +
+  "catch(e){document.getElementById('thStatus').textContent='Готово. Можно закрыть это окно.';}" +
+  "</script></body></html>";
+
+function readBodyForm(req, maxBytes, cb) {
+  let total = 0;
+  const chunks = [];
+  req.on("data", (chunk) => {
+    total += chunk.length;
+    if (total > maxBytes) { req.destroy(); return cb(new Error("payload too large")); }
+    chunks.push(chunk);
+  });
+  req.on("end", () => {
+    try {
+      cb(null, bitrixApp.parseFormEncoded(Buffer.concat(chunks).toString("utf8")));
+    } catch (e) {
+      cb(e);
+    }
+  });
+  req.on("error", cb);
+}
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const PORT = process.env.PORT || 3000;
@@ -88,6 +118,30 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === "/api/me" && req.method === "GET") {
     return sendJSON(res, 200, { authed: auth.isAuthed(req) });
+  }
+
+  // ---- Bitrix24: установка локального приложения и приём событий ----
+  // Эти запросы шлёт сам Bitrix24, без нашей куки авторизации — поэтому
+  // они вынесены за пределы блока /api/, где требуется логин.
+  if (pathname === "/bitrix/install" && (req.method === "GET" || req.method === "POST")) {
+    if (req.method === "POST") {
+      return readBodyForm(req, 1024 * 50, (err, fields) => {
+        if (!err && fields && fields.AUTH_ID) {
+          bitrixApp.handleInstallPost(fields);
+          bitrixApp.bindEvents().catch(() => {});
+        }
+        send(res, 200, INSTALL_HTML, { "Content-Type": "text/html; charset=utf-8" });
+      });
+    }
+    return send(res, 200, INSTALL_HTML, { "Content-Type": "text/html; charset=utf-8" });
+  }
+  if (pathname === "/bitrix/event" && req.method === "POST") {
+    return readBodyForm(req, 1024 * 100, (err, fields) => {
+      if (!err && fields) {
+        bitrixApp.handleEvent(fields).catch(() => {});
+      }
+      send(res, 200, "ok"); // всегда 200, иначе Bitrix24 будет повторять доставку
+    });
   }
 
   if (pathname.startsWith("/api/")) {

@@ -5,9 +5,11 @@
 "use strict";
 const https = require("https");
 const { URL } = require("url");
+const store = require("./store");
 
 // Костанай, Казахстан — UTC+5, без перехода на летнее время.
 const TZ_OFFSET_MIN = 5 * 60;
+const MAX_EVENTS_PER_MANAGER = 300;
 
 /* ---------------- низкоуровневый вызов метода ---------------- */
 function callMethod(webhookUrl, method, params) {
@@ -106,6 +108,14 @@ function fmtBitrixDate(d) {
     "T" + p(local.getUTCHours()) + ":" + p(local.getUTCMinutes()) + ":" + p(local.getUTCSeconds()) + "+05:00";
 }
 
+function fmtLocalDateTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const local = new Date(d.getTime() + TZ_OFFSET_MIN * 60000);
+  const p = (n) => (n < 10 ? "0" + n : "" + n);
+  return p(local.getUTCDate()) + "." + p(local.getUTCMonth() + 1) + " " + p(local.getUTCHours()) + ":" + p(local.getUTCMinutes());
+}
+
 function uniq(arr) {
   return Array.from(new Set(arr.filter((x) => x != null).map(String)));
 }
@@ -128,24 +138,108 @@ async function getUsers(webhookUrl) {
   }
 }
 
-/* ---------------- подсчёт по менеджерам ---------------- */
-function bump(map, managerId, field) {
-  if (managerId == null) return;
-  const id = String(managerId);
-  if (!map[id]) map[id] = { deals: 0, leads: 0, movedDeals: 0, movedLeads: 0 };
-  map[id][field]++;
+/* ---------------- человекочитаемые названия этапов ---------------- */
+// Названия стадий сделок зависят от воронки (направления продаж).
+// crm.status.list с ENTITY_ID="DEAL_STAGE" — стадии основной воронки,
+// "DEAL_STAGE_<ID>" — стадии дополнительных воронок (crm.dealcategory.list).
+async function getDealStageNames(webhookUrl) {
+  const map = {};
+  try {
+    let categories = [];
+    try {
+      const catData = await callMethod(webhookUrl, "crm.dealcategory.list", {});
+      categories = Array.isArray(catData.result) ? catData.result : [];
+    } catch (e) {
+      categories = [];
+    }
+    const entityIds = ["DEAL_STAGE"].concat(categories.map((c) => "DEAL_STAGE_" + c.ID));
+    const lists = await Promise.all(entityIds.map((eid) =>
+      callMethod(webhookUrl, "crm.status.list", { filter: { ENTITY_ID: eid } }).catch(() => ({ result: [] }))
+    ));
+    lists.forEach((data) => {
+      (Array.isArray(data.result) ? data.result : []).forEach((s) => {
+        if (s && s.STATUS_ID) map[s.STATUS_ID] = s.NAME || s.STATUS_ID;
+      });
+    });
+  } catch (e) {
+    // если что-то не получилось — просто покажем сырые коды этапов вместо названий
+  }
+  return map;
 }
 
-async function countCreated(webhookUrl, from, to) {
-  const filter = { ">=DATE_CREATE": fmtBitrixDate(from), "<DATE_CREATE": fmtBitrixDate(to) };
-  const [deals, leads] = await Promise.all([
-    listAll(webhookUrl, "crm.deal.list", { select: ["ID", "ASSIGNED_BY_ID"], filter: filter }),
-    listAll(webhookUrl, "crm.lead.list", { select: ["ID", "ASSIGNED_BY_ID"], filter: filter }),
-  ]);
-  const out = {};
-  deals.forEach((d) => bump(out, d.ASSIGNED_BY_ID, "deals"));
-  leads.forEach((l) => bump(out, l.ASSIGNED_BY_ID, "leads"));
-  return out;
+async function getLeadStatusNames(webhookUrl) {
+  try {
+    const data = await callMethod(webhookUrl, "crm.status.list", { filter: { ENTITY_ID: "STATUS" } });
+    const map = {};
+    (Array.isArray(data.result) ? data.result : []).forEach((s) => {
+      if (s && s.STATUS_ID) map[s.STATUS_ID] = s.NAME || s.STATUS_ID;
+    });
+    return map;
+  } catch (e) {
+    return {};
+  }
+}
+
+/* ---------------- история стадий ---------------- */
+// TYPE_ID: 1 — создание, 2 — промежуточная стадия, 3 — финальная стадия, 5 — смена воронки.
+async function fetchStageHistory(webhookUrl, entityTypeId, from, to) {
+  const filter = { ">=CREATED_TIME": fmtBitrixDate(from), "<CREATED_TIME": fmtBitrixDate(to), "@TYPE_ID": [1, 2, 3, 5] };
+  const items = await listAll(webhookUrl, "crm.stagehistory.list", {
+    entityTypeId: entityTypeId,
+    filter: filter,
+    order: { CREATED_TIME: "ASC" },
+    select: ["ID", "OWNER_ID", "TYPE_ID", "CREATED_TIME", "STAGE_ID", "STAGE_SEMANTIC_ID"],
+  });
+  items.sort((a, b) => new Date(a.CREATED_TIME) - new Date(b.CREATED_TIME));
+  return items;
+}
+
+// Для карточек, у которых первое событие в выбранном периоде — уже перемещение
+// (карточка была создана раньше), узнаём, на каком этапе она была до начала периода.
+async function fetchPriorStages(webhookUrl, entityTypeId, ownerIds, beforeDate) {
+  const map = {};
+  for (let i = 0; i < ownerIds.length; i += 50) {
+    const chunk = ownerIds.slice(i, i + 50);
+    if (!chunk.length) continue;
+    const items = await listAll(webhookUrl, "crm.stagehistory.list", {
+      entityTypeId: entityTypeId,
+      filter: { "@OWNER_ID": chunk, "<CREATED_TIME": fmtBitrixDate(beforeDate) },
+      order: { CREATED_TIME: "DESC" },
+      select: ["OWNER_ID", "STAGE_ID", "CREATED_TIME"],
+    });
+    items.forEach((it) => {
+      const id = String(it.OWNER_ID);
+      if (!(id in map)) map[id] = it.STAGE_ID; // первое вхождение — самая свежая запись (сортировка DESC)
+    });
+  }
+  return map;
+}
+
+// Превращает плоскую историю стадий по карточкам в события "создал"/"переместил" с указанием from→to.
+function deriveTransitions(history) {
+  const byOwner = {};
+  history.forEach((it) => {
+    const id = String(it.OWNER_ID);
+    (byOwner[id] = byOwner[id] || []).push(it);
+  });
+  const events = [];
+  const needsPrior = []; // {ownerId, eventRef}
+  Object.keys(byOwner).forEach((ownerId) => {
+    const list = byOwner[ownerId];
+    let prevStage = null;
+    list.forEach((it, idx) => {
+      if (it.TYPE_ID === 1) {
+        events.push({ ownerId: ownerId, time: it.CREATED_TIME, type: "created", fromStage: null, toStage: it.STAGE_ID, semantic: it.STAGE_SEMANTIC_ID });
+        prevStage = it.STAGE_ID;
+      } else {
+        const ev = { ownerId: ownerId, time: it.CREATED_TIME, type: "moved", fromStage: prevStage, toStage: it.STAGE_ID, semantic: it.STAGE_SEMANTIC_ID };
+        if (idx === 0) needsPrior.push({ ownerId: ownerId, eventRef: ev });
+        events.push(ev);
+        prevStage = it.STAGE_ID;
+      }
+    });
+  });
+  return { events: events, needsPrior: needsPrior };
 }
 
 async function resolveAssignees(webhookUrl, method, ids) {
@@ -159,51 +253,131 @@ async function resolveAssignees(webhookUrl, method, ids) {
   return map;
 }
 
-// "Перемещено" — переход на промежуточную/финальную стадию или смена воронки.
-// TYPE_ID: 1 — создание (не считаем как перемещение), 2 — промежуточная стадия,
-// 3 — финальная стадия, 5 — смена воронки.
-async function countMoved(webhookUrl, from, to) {
-  const filter = { ">=CREATED_TIME": fmtBitrixDate(from), "<CREATED_TIME": fmtBitrixDate(to), "@TYPE_ID": [2, 3, 5] };
-  const [dealMoves, leadMoves] = await Promise.all([
-    listAll(webhookUrl, "crm.stagehistory.list", { entityTypeId: 2, filter: filter, select: ["ID", "OWNER_ID", "TYPE_ID"] }),
-    listAll(webhookUrl, "crm.stagehistory.list", { entityTypeId: 1, filter: filter, select: ["ID", "OWNER_ID", "TYPE_ID"] }),
+/* ---------------- сводный отчёт с лентой событий ---------------- */
+async function getManagerReport(webhookUrl, period) {
+  const range = periodRange(period);
+  const { from, to } = range;
+
+  const [users, dealStageNames, leadStatusNames, dealHistory, leadHistory] = await Promise.all([
+    getUsers(webhookUrl),
+    getDealStageNames(webhookUrl),
+    getLeadStatusNames(webhookUrl),
+    fetchStageHistory(webhookUrl, 2, from, to),
+    fetchStageHistory(webhookUrl, 1, from, to),
   ]);
-  const dealOwnerIds = uniq(dealMoves.map((m) => m.OWNER_ID));
-  const leadOwnerIds = uniq(leadMoves.map((m) => m.OWNER_ID));
-  const [dealOwnerMap, leadOwnerMap] = await Promise.all([
+
+  const dealDerived = deriveTransitions(dealHistory);
+  const leadDerived = deriveTransitions(leadHistory);
+
+  const dealPriorIds = uniq(dealDerived.needsPrior.map((x) => x.ownerId));
+  const leadPriorIds = uniq(leadDerived.needsPrior.map((x) => x.ownerId));
+  const [dealPriorMap, leadPriorMap] = await Promise.all([
+    dealPriorIds.length ? fetchPriorStages(webhookUrl, 2, dealPriorIds, from) : {},
+    leadPriorIds.length ? fetchPriorStages(webhookUrl, 1, leadPriorIds, from) : {},
+  ]);
+  dealDerived.needsPrior.forEach((x) => { x.eventRef.fromStage = dealPriorMap[x.ownerId] || null; });
+  leadDerived.needsPrior.forEach((x) => { x.eventRef.fromStage = leadPriorMap[x.ownerId] || null; });
+
+  const dealOwnerIds = uniq(dealDerived.events.map((e) => e.ownerId));
+  const leadOwnerIds = uniq(leadDerived.events.map((e) => e.ownerId));
+  const [dealAssigneeMap, leadAssigneeMap] = await Promise.all([
     resolveAssignees(webhookUrl, "crm.deal.list", dealOwnerIds),
     resolveAssignees(webhookUrl, "crm.lead.list", leadOwnerIds),
   ]);
-  const out = {};
-  dealMoves.forEach((m) => bump(out, dealOwnerMap[String(m.OWNER_ID)], "movedDeals"));
-  leadMoves.forEach((m) => bump(out, leadOwnerMap[String(m.OWNER_ID)], "movedLeads"));
-  return out;
-}
 
-/* ---------------- сводный отчёт ---------------- */
-async function getManagerReport(webhookUrl, period) {
-  const range = periodRange(period);
-  const [users, created, moved] = await Promise.all([
-    getUsers(webhookUrl),
-    countCreated(webhookUrl, range.from, range.to),
-    countMoved(webhookUrl, range.from, range.to),
-  ]);
-  const ids = uniq(Object.keys(created).concat(Object.keys(moved)));
+  function stageName(map, code) {
+    if (code == null) return null;
+    return map[code] || code;
+  }
+
+  const allEvents = [];
+  dealDerived.events.forEach((e) => {
+    allEvents.push({
+      time: e.time,
+      timeLabel: fmtLocalDateTime(e.time),
+      entityType: "deal",
+      entityId: e.ownerId,
+      type: e.type,
+      fromStage: stageName(dealStageNames, e.fromStage),
+      toStage: stageName(dealStageNames, e.toStage),
+      semantic: e.semantic,
+      managerId: dealAssigneeMap[e.ownerId] != null ? String(dealAssigneeMap[e.ownerId]) : null,
+    });
+  });
+  leadDerived.events.forEach((e) => {
+    allEvents.push({
+      time: e.time,
+      timeLabel: fmtLocalDateTime(e.time),
+      entityType: "lead",
+      entityId: e.ownerId,
+      type: e.type,
+      fromStage: stageName(leadStatusNames, e.fromStage),
+      toStage: stageName(leadStatusNames, e.toStage),
+      semantic: e.semantic,
+      managerId: leadAssigneeMap[e.ownerId] != null ? String(leadAssigneeMap[e.ownerId]) : null,
+    });
+  });
+  // ---- точные события из локального приложения Bitrix24 (event.bind) ----
+  // Для карточек, по которым уже накоплены реальные события (с момента подключения
+  // приложения), берём именно их — там известен настоящий исполнитель действия,
+  // а не текущий ответственный по карточке. Грубые события из crm.stagehistory.list
+  // для этих же карточек за тот же период отбрасываем, чтобы не дублировать.
+  const realRaw = store.getBitrixEvents().filter((e) => {
+    const t = new Date(e.time);
+    return t >= from && t < to;
+  });
+  const realKeys = new Set(realRaw.map((e) => e.entityType + ":" + e.entityId));
+  const approxFiltered = allEvents.filter((e) => !realKeys.has(e.entityType + ":" + e.entityId));
+  const realEvents = realRaw.map((e) => {
+    const namesMap = e.entityType === "lead" ? leadStatusNames : dealStageNames;
+    return {
+      time: e.time,
+      timeLabel: fmtLocalDateTime(e.time),
+      entityType: e.entityType,
+      entityId: e.entityId,
+      type: e.type,
+      fromStage: stageName(namesMap, e.fromStage),
+      toStage: stageName(namesMap, e.toStage),
+      semantic: null,
+      managerId: e.actorId || null,
+      managerName: e.actorName || null,
+      real: true,
+    };
+  });
+  const merged = approxFiltered.concat(realEvents);
+  merged.sort((a, b) => new Date(b.time) - new Date(a.time));
+
+  const byManager = {};
+  merged.forEach((e) => {
+    if (e.managerId == null) return;
+    const m = (byManager[e.managerId] = byManager[e.managerId] || { events: [], createdDeals: 0, createdLeads: 0, movedDeals: 0, movedLeads: 0, name: null });
+    if (m.events.length < MAX_EVENTS_PER_MANAGER) m.events.push(e);
+    if (e.managerName && !m.name) m.name = e.managerName;
+    if (e.type === "created" && e.entityType === "deal") m.createdDeals++;
+    if (e.type === "created" && e.entityType === "lead") m.createdLeads++;
+    if (e.type === "moved" && e.entityType === "deal") m.movedDeals++;
+    if (e.type === "moved" && e.entityType === "lead") m.movedLeads++;
+  });
+
+  // показываем и активных сотрудников без единого события за период — так видно,
+  // что у них просто не было назначенных карточек (а не что отчёт их "потерял").
+  const ids = uniq(Object.keys(byManager).concat(Object.keys(users)));
   const rows = ids.map((id) => {
-    const c = created[id] || { deals: 0, leads: 0 };
-    const m = moved[id] || { movedDeals: 0, movedLeads: 0 };
+    const m = byManager[id] || { events: [], createdDeals: 0, createdLeads: 0, movedDeals: 0, movedLeads: 0, name: null };
     return {
       id: id,
-      name: users[id] || ("Пользователь #" + id),
-      createdDeals: c.deals,
-      createdLeads: c.leads,
-      created: c.deals + c.leads,
+      name: users[id] || m.name || ("Пользователь #" + id),
+      createdDeals: m.createdDeals,
+      createdLeads: m.createdLeads,
+      created: m.createdDeals + m.createdLeads,
       movedDeals: m.movedDeals,
       movedLeads: m.movedLeads,
       moved: m.movedDeals + m.movedLeads,
+      events: m.events,
     };
   });
   rows.sort((a, b) => (b.created + b.moved) - (a.created + a.moved));
+
   return {
     period: period,
     from: range.from.toISOString(),
