@@ -212,18 +212,33 @@ details.panel[open]>summary::before{transform:rotate(90deg);}
   body{background:#fff;}
   .wrap{max-width:none;padding:0;}
   .no-print{display:none !important;}
-  .plan-grid{break-inside:auto;}
   body.print-plan .toprow,
   body.print-plan #sec-orders,
   body.print-plan #sec-cats,
   body.print-plan .toolbar-row{display:none !important;}
-  body.print-plan .plan-grid{grid-template-columns:repeat(2,1fr);}
-  body.print-plan #plan-print-head{display:block !important;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:14px;}
-  body.print-plan #plan-print-head h2{margin:2px 0 0;font-size:20px;}
-  body.print-plan #plan-print-head .t{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#000;font-weight:700;}
-  body.print-plan #plan-print-head .d{font-size:12.5px;color:#333;margin-top:2px;}
-  body.print-plan .groupcard td.f,body.print-plan .groupcard th.f{display:table-cell !important;}
-  .groupcard{box-shadow:none;border:1px solid var(--line);}
+
+  /* компактная книжная форма — один столбец, минимальные отступы */
+  body.print-plan #plan-print-head{display:block !important;border-bottom:1.5px solid #000;padding-bottom:6px;margin-bottom:10px;}
+  body.print-plan #plan-print-head h2{margin:1px 0 0;font-size:16px;}
+  body.print-plan #plan-print-head .t{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#000;font-weight:700;}
+  body.print-plan #plan-print-head .d{font-size:11px;color:#333;margin-top:1px;}
+
+  body.print-plan .card{background:#fff;padding:0;border-radius:0;box-shadow:none;}
+  body.print-plan .plan-head{margin-bottom:8px;}
+  body.print-plan .plan-head .sub{font-size:11px;}
+  body.print-plan .plan-grid{display:block;}
+  body.print-plan .groupcard{
+    background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:none;
+    padding:8px 10px;margin-bottom:8px;break-inside:avoid;page-break-inside:avoid;
+  }
+  body.print-plan .groupcard .gh{margin-bottom:6px;gap:8px;}
+  body.print-plan .groupcard .pill-tag.dark,
+  body.print-plan .groupcard .pill-tag.pink{font-size:13px;padding:5px 12px;}
+  body.print-plan .groupcard .pill-stat{font-size:11px;}
+  body.print-plan .groupcard thead th{padding:0 0 3px;font-size:11px;}
+  body.print-plan .groupcard td{padding:2px 0;font-size:11.5px;}
+  body.print-plan .groupcard tr.sum td{padding-top:4px;}
+  body.print-plan .groupcard td.f,body.print-plan .groupcard th.f{display:table-cell !important;width:36px;}
 }
 
 /* ---------- п.7: резиновая раскладка ---------- */
