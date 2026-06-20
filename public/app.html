@@ -25,7 +25,7 @@
       </nav>
     </div>
     <div class="tr-center">
-      <div class="wordmark">THE HELLO<span class="script">team</span></div>
+      <img class="wordmark-img" src="/img/wordmark.png" alt="THE HELLO team">
     </div>
     <div class="tr-right">
       <div class="files">
@@ -68,22 +68,22 @@
 
     <div id="planContent" class="hidden">
 
-      <div class="row-2" id="sec-orders" style="margin-bottom:24px;">
-        <div class="left card" style="padding:24px;">
-          <div class="pill-tag" style="margin-bottom:18px;"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h4.146l-1.892 6.117a.75.75 0 0 0 1.281.692l8.5-9.5a.75.75 0 0 0-.559-1.309H9.83l1.953-6.093z"/></svg> Заказы к отгрузке</div>
+      <div class="row-2" id="sec-orders">
+        <div class="left card">
+          <div class="pill-tag" style="margin-bottom:24px;"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h4.146l-1.892 6.117a.75.75 0 0 0 1.281.692l8.5-9.5a.75.75 0 0 0-.559-1.309H9.83l1.953-6.093z"/></svg> Заказы к отгрузке</div>
           <div style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap;">
-            <div style="display:flex;flex-direction:column;gap:24px;flex:none;">
+            <div style="display:flex;gap:32px;flex:none;flex-wrap:wrap;">
               <div><div class="bignum num" id="kpiOrders">0</div><div class="bigcap">заказов к<br>отгрузке</div></div>
               <div><div class="bignum num" id="kpiFires">0</div><div class="bigcap">из них<br>горящих</div></div>
             </div>
             <div id="barsWrap" style="flex:1;min-width:280px;"></div>
           </div>
         </div>
-        <div class="right card" style="padding:24px;background:var(--blue);">
-          <div class="pill-tag" style="margin-bottom:18px;"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> В очереди на производство</div>
-          <div style="display:flex;gap:36px;flex-wrap:wrap;">
-            <div><div class="bignum num" id="kpiUnits">0</div><div class="bigcap">единиц<br>к выпуску</div></div>
-            <div><div class="bignum num" id="kpiTons">0</div><div class="bigcap">тонн<br>в выпуске</div></div>
+        <div class="right card">
+          <div class="pill-tag" style="margin-bottom:24px;"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> В очереди на производство</div>
+          <div style="display:flex;gap:48px;flex-wrap:wrap;">
+            <div class="kpi2"><div class="cap">единиц к выпуску</div><div class="num" id="kpiUnits">0</div></div>
+            <div class="kpi2"><div class="cap">тонн в выпуску</div><div class="num" id="kpiTons">0</div></div>
           </div>
         </div>
       </div>
@@ -103,26 +103,22 @@
         </div>
       </details>
 
-      <div class="toolbar-row no-print">
-        <div class="section-strip" style="flex:1;margin-bottom:0;">
+      <div class="card">
+        <div class="plan-head">
           <h2><span class="pill-tag"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l.681 1.18a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .205 1.251l-.681 1.18a1 1 0 0 1-1.186.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-.681-1.18a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L2.821 7.773a1 1 0 0 1-.205-1.251l.681-1.18a1 1 0 0 1 1.186-.447l1.598.54A6.993 6.993 0 0 1 7.51 3.456l.33-1.652zM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg> План производства</span> <span class="sub">— сколько необходимо продукции, чтобы закрыть неотгруженные заказы</span></h2>
-          <div style="margin-left:auto;display:flex;gap:8px;">
-            <button class="btn btn-ghost" id="printPlanBtn" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1"/><path d="M6 17v4h12v-4"/></svg> Печать плана</button>
-            <button class="btn btn-dark" id="printAllBtn" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1"/><path d="M6 17v4h12v-4"/></svg> Печать всего</button>
-          </div>
+          <button class="btn-round no-print" id="printPlanBtn" type="button" title="Печать плана"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1"/><path d="M6 17v4h12v-4"/></svg></button>
         </div>
+        <div class="plan-grid" id="planGrid"></div>
       </div>
 
-      <div class="plan-grid" id="planGrid"></div>
-
-      <div class="otherwrap" style="margin-bottom:16px;">
+      <div class="otherwrap">
         <div class="card">
           <div class="lbl">Прочее — не входит в план производства (услуги, доставка, предоплата и т.п.)</div>
           <table><tbody id="otherBody"></tbody></table>
         </div>
       </div>
 
-      <div class="cat-grid no-print" id="sec-cats">
+      <div class="cat-grid no-print" id="sec-cats" style="margin-top:var(--gap);">
         <div class="card catcard">
           <div class="ch"><span class="pill-tag"><svg class="icon" viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h4.146l-1.892 6.117a.75.75 0 0 0 1.281.692l8.5-9.5a.75.75 0 0 0-.559-1.309H9.83l1.953-6.093z"/></svg> Гос закуп · своя доставка</span></div>
           <div class="orderlist" id="catOwn"></div>
@@ -137,12 +133,8 @@
         </div>
       </div>
 
-      <div class="banner no-print" style="margin-top:16px;">
-        <div class="heart-badge"><svg class="icon" viewBox="0 0 24 24"><path d="M12 21s-7.2-4.6-10-9.1C.4 9.1 1.4 5.4 4.6 4.2 7 3.3 9.4 4.2 12 6.7c2.6-2.5 5-3.4 7.4-2.5 3.2 1.2 4.2 4.9 2.6 7.7C19.2 16.4 12 21 12 21z"/></svg></div>
-        <div class="the">THE</div>
-        <div class="slogan">Your Mood<br>Your Rules</div>
-        <div class="script">Team</div>
-        <div class="hello">hello</div>
+      <div class="banner-wrap no-print" style="margin-top:var(--gap);">
+        <img class="banner-img" src="/img/banner.png" alt="THE HELLO Team">
       </div>
 
     </div>
