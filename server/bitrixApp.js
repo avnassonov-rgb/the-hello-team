@@ -201,6 +201,14 @@ async function callAppMethod(method, params) {
 // Если локальный кэш этапа пуст (например, сервер перезапустился и файловый
 // кэш сбросился), узнаём предыдущий этап карточки напрямую у Bitrix24 — там
 // история стадий не теряется. Берём последние записи истории.
+//
+// ВАЖНО: у этого метода нестандартный формат ответа — список лежит не прямо
+// в result (как у большинства методов списков), а в result.items:
+//   { "result": { "items": [ { "ID":.., "STAGE_ID":.., "CREATED_TIME":.. }, ... ] } }
+// (см. официальную документацию apidocs.bitrix24.com/api-reference/crm/crm-stage-history-list.html).
+// Раньше код ждал, что result — это сразу массив, поэтому Array.isArray(result)
+// было всегда false, и функция всегда возвращала пустой список — вот почему
+// предыдущий этап никогда не находился, сколько бы раз мы ни переспрашивали.
 async function fetchLastStages(entityTypeId, entityId, limit) {
   try {
     const data = await callAppMethod("crm.stagehistory.list", {
@@ -209,7 +217,11 @@ async function fetchLastStages(entityTypeId, entityId, limit) {
       order: { CREATED_TIME: "DESC" },
       select: ["ID", "STAGE_ID", "CREATED_TIME", "TYPE_ID"],
     });
-    const list = Array.isArray(data && data.result) ? data.result : [];
+    const result = data && data.result;
+    let list;
+    if (Array.isArray(result)) list = result; // на случай если формат когда-то поменяется обратно
+    else if (result && Array.isArray(result.items)) list = result.items;
+    else list = [];
     return list.slice(0, limit || 5);
   } catch (e) {
     console.error("[bitrix] fetchLastStages: ошибка — " + e.message);
