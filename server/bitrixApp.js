@@ -198,6 +198,26 @@ async function callAppMethod(method, params) {
   return data;
 }
 
+// Если локальный кэш этапа пуст (например, сервер перезапустился и файловый
+// кэш сбросился), узнаём предыдущий этап карточки напрямую у Bitrix24 — там
+// история стадий не теряется. Берём последние записи истории, и если самая
+// свежая совпадает с текущим этапом, предыдущая запись и есть искомый "откуда".
+async function fetchLastStages(entityTypeId, entityId, limit) {
+  try {
+    const data = await callAppMethod("crm.stagehistory.list", {
+      entityTypeId: entityTypeId,
+      filter: { OWNER_ID: entityId },
+      order: { CREATED_TIME: "DESC" },
+      select: ["ID", "STAGE_ID", "CREATED_TIME", "TYPE_ID"],
+    });
+    const list = Array.isArray(data && data.result) ? data.result : [];
+    return list.slice(0, limit || 5);
+  } catch (e) {
+    console.error("[bitrix] fetchLastStages: ошибка — " + e.message);
+    return [];
+  }
+}
+
 async function bindEvents() {
   const handler = PUBLIC_BASE_URL + "/bitrix/event";
   const results = [];
@@ -282,8 +302,19 @@ async function handleEvent(parsed) {
     return { ok: true };
   }
 
-  // update — сравниваем с последним известным этапом, чтобы понять, было ли это перемещение
-  const prevStage = store.getCachedStage(meta.type, entityId);
+  // update — сравниваем с последним известным этапом, чтобы понять, было ли это перемещение.
+  // Если файловый кэш пуст (например, сервер перезапустился) — не сдаёмся и не уходим
+  // в догадки по "текущему ответственному": спрашиваем у самого Bitrix24 историю этапов
+  // этой карточки, она у них не теряется, и восстанавливаем точный "откуда" этап.
+  let prevStage = store.getCachedStage(meta.type, entityId);
+  if (prevStage == null && currentStage != null) {
+    const entityTypeId = meta.type === "deal" ? 2 : 1;
+    const stages = await fetchLastStages(entityTypeId, entityId, 5);
+    if (stages.length >= 2 && String(stages[0].STAGE_ID) === String(currentStage)) {
+      prevStage = stages[1].STAGE_ID;
+      console.log("[bitrix] handleEvent: локальный кэш этапа пуст — восстановил prevStage=" + prevStage + " из истории Bitrix24");
+    }
+  }
   console.log("[bitrix] handleEvent: update " + meta.type + " #" + entityId + " prevStage=" + prevStage + " currentStage=" + currentStage + " actor=" + (actor ? actor.id + " " + actor.name : "null"));
   if (currentStage != null && prevStage != null && String(currentStage) !== String(prevStage)) {
     store.appendBitrixEvent({
@@ -292,7 +323,7 @@ async function handleEvent(parsed) {
       actorId: actor ? actor.id : null, actorName: actor ? actor.name : null,
     });
   } else {
-    console.log("[bitrix] handleEvent: изменений этапа не обнаружено (либо prevStage не был закэширован) — событие 'moved' не записано");
+    console.log("[bitrix] handleEvent: изменений этапа не обнаружено — событие 'moved' не записано");
   }
   if (currentStage != null) store.setCachedStage(meta.type, entityId, currentStage);
   return { ok: true };
