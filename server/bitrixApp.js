@@ -200,8 +200,7 @@ async function callAppMethod(method, params) {
 
 // Если локальный кэш этапа пуст (например, сервер перезапустился и файловый
 // кэш сбросился), узнаём предыдущий этап карточки напрямую у Bitrix24 — там
-// история стадий не теряется. Берём последние записи истории, и если самая
-// свежая совпадает с текущим этапом, предыдущая запись и есть искомый "откуда".
+// история стадий не теряется. Берём последние записи истории.
 async function fetchLastStages(entityTypeId, entityId, limit) {
   try {
     const data = await callAppMethod("crm.stagehistory.list", {
@@ -223,21 +222,31 @@ function sleep(ms) {
 }
 
 // Сразу после прихода события история этапов в Bitrix24 иногда ещё не успевает
-// записаться (короткая задержка на их стороне) — поэтому одной попытки часто
-// не хватает: самая свежая запись истории не совпадает с текущим этапом, и
-// мы зря решаем, что "изменений не было". Пробуем несколько раз с паузой —
-// ответ на вебхук это не задерживает, он уже отправлен раньше.
-async function fetchPrevStageWithRetry(entityTypeId, entityId, currentStage) {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (attempt > 0) await sleep(1200);
+// записаться (короткая задержка на их стороне). Раньше мы сверяли самую свежую
+// запись истории с "текущим этапом", отдельно запрошенным через crm.deal.get —
+// но этот отдельный запрос САМ иногда отстаёт и возвращает старое значение,
+// из-за чего сверка никогда не совпадала, даже после повторных попыток.
+// Надёжнее не сверять два ненадёжных источника друг с другом, а просто
+// доверять самой свежей записи истории по времени её создания: если она
+// создана только что (близко к моменту события) — значит, это и есть
+// результат текущего перемещения, и берём из неё и "куда", и "откуда".
+async function fetchPrevStageWithRetry(entityTypeId, entityId, eventTimeMs) {
+  const FRESH_WINDOW_MS = 3 * 60 * 1000; // 3 минуты — с запасом на задержки и разницу часов
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) await sleep(1500);
     const stages = await fetchLastStages(entityTypeId, entityId, 5);
-    if (stages.length >= 2 && String(stages[0].STAGE_ID) === String(currentStage)) {
-      console.log("[bitrix] fetchPrevStageWithRetry: нашёл prevStage=" + stages[1].STAGE_ID + " (попытка " + (attempt + 1) + ")");
-      return stages[1].STAGE_ID;
+    if (stages.length >= 1) {
+      const top = stages[0];
+      const topTime = new Date(top.CREATED_TIME).getTime();
+      if (!isNaN(topTime) && topTime >= eventTimeMs - FRESH_WINDOW_MS) {
+        const prevStage = stages.length >= 2 ? stages[1].STAGE_ID : null;
+        console.log("[bitrix] fetchPrevStageWithRetry: свежая запись найдена (попытка " + (attempt + 1) + ") toStage=" + top.STAGE_ID + " prevStage=" + prevStage);
+        return { toStage: top.STAGE_ID, prevStage: prevStage };
+      }
     }
   }
-  console.log("[bitrix] fetchPrevStageWithRetry: не удалось определить предыдущий этап после нескольких попыток");
-  return null;
+  console.log("[bitrix] fetchPrevStageWithRetry: свежая запись истории не появилась после нескольких попыток");
+  return { toStage: null, prevStage: null };
 }
 
 async function bindEvents() {
@@ -311,7 +320,7 @@ async function handleEvent(parsed) {
     console.error("[bitrix] handleEvent: не удалось получить карточку " + meta.type + " #" + entityId + " — " + e.message);
     entity = null;
   }
-  const currentStage = entity ? entity[stageField] : null;
+  let currentStage = entity ? entity[stageField] : null;
 
   if (meta.action === "add") {
     if (currentStage != null) store.setCachedStage(meta.type, entityId, currentStage);
@@ -325,14 +334,19 @@ async function handleEvent(parsed) {
   }
 
   // update — сравниваем с последним известным этапом, чтобы понять, было ли это перемещение.
-  // Если файловый кэш пуст (например, сервер перезапустился) — не сдаёмся и не уходим
-  // в догадки по "текущему ответственному": спрашиваем у самого Bitrix24 историю этапов
-  // этой карточки, она у них не теряется, и восстанавливаем точный "откуда" этап. Сразу
-  // после события история может ещё не успеть записаться — пробуем несколько раз с паузой.
+  // Если файловый кэш пуст (например, сервер перезапустился или это первая карточка
+  // такого типа) — не сдаёмся и не уходим в догадки по "текущему ответственному":
+  // спрашиваем у самого Bitrix24 историю этапов этой карточки, она у них не теряется.
+  // Берём из истории и "куда" и "откуда" по самой свежей записи — а не сверяем её с
+  // отдельным запросом "текущего этапа" (он сам иногда отстаёт и сверка не совпадёт).
   let prevStage = store.getCachedStage(meta.type, entityId);
-  if (prevStage == null && currentStage != null) {
+  if (prevStage == null) {
     const entityTypeId = meta.type === "deal" ? 2 : 1;
-    prevStage = await fetchPrevStageWithRetry(entityTypeId, entityId, currentStage);
+    const fresh = await fetchPrevStageWithRetry(entityTypeId, entityId, Date.now());
+    if (fresh.toStage != null) {
+      currentStage = fresh.toStage;
+      prevStage = fresh.prevStage;
+    }
   }
   console.log("[bitrix] handleEvent: update " + meta.type + " #" + entityId + " prevStage=" + prevStage + " currentStage=" + currentStage + " actor=" + (actor ? actor.id + " " + actor.name : "null"));
   if (currentStage != null && prevStage != null && String(currentStage) !== String(prevStage)) {
