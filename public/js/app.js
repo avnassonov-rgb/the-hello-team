@@ -428,7 +428,14 @@
 
   /* ---------------- менеджеры (Bitrix24) ---------------- */
   var managersLoaded = false;
-  var currentPeriod = "today";
+  var currentFrom = null;
+  var currentTo = null;
+
+  function mgrTodayStr() {
+    var d = new Date();
+    var p = function (n) { return n < 10 ? "0" + n : "" + n; };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  }
 
   function fmtMgrNum(n) { return (n || 0).toLocaleString("ru-RU"); }
 
@@ -504,14 +511,15 @@
     }
   }
 
-  function loadManagersReport(period) {
-    currentPeriod = period;
+  function loadManagersReport(fromStr, toStr) {
+    currentFrom = fromStr;
+    currentTo = toStr;
     var msg = document.getElementById("managersMsg");
     var wrap = document.getElementById("managersCards");
     msg.textContent = "Загрузка данных из Bitrix24…";
     msg.classList.remove("hidden");
     wrap.classList.add("hidden");
-    fetch("/api/bitrix/report?period=" + encodeURIComponent(period))
+    fetch("/api/bitrix/report?from=" + encodeURIComponent(fromStr) + "&to=" + encodeURIComponent(toStr))
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (!j.ok) {
@@ -530,19 +538,31 @@
   }
 
   function initManagersTab() {
-    $all("#periodSwitch .pbtn").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        $all("#periodSwitch .pbtn").forEach(function (b) { b.classList.remove("active"); });
-        btn.classList.add("active");
-        loadManagersReport(btn.getAttribute("data-period"));
-      });
+    var fromInput = document.getElementById("periodFrom");
+    var toInput = document.getElementById("periodTo");
+    var todayStr = mgrTodayStr();
+    fromInput.value = todayStr;
+    toInput.value = todayStr;
+    currentFrom = todayStr;
+    currentTo = todayStr;
+
+    var applyBtn = document.getElementById("periodApplyBtn");
+    applyBtn.addEventListener("click", function () {
+      var f = fromInput.value || todayStr;
+      var t = toInput.value || f;
+      loadManagersReport(f, t);
     });
+    var refreshBtn = document.getElementById("periodRefreshBtn");
+    refreshBtn.addEventListener("click", function () {
+      loadManagersReport(currentFrom, currentTo);
+    });
+
     var tabBtn = document.querySelector('.tab[data-tab="managers"]');
     if (tabBtn) {
       tabBtn.addEventListener("click", function () {
         if (!managersLoaded) {
           managersLoaded = true;
-          loadManagersReport(currentPeriod);
+          loadManagersReport(currentFrom, currentTo);
         }
       });
     }
