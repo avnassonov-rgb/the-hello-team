@@ -101,6 +101,24 @@ function periodRange(period, now) {
   };
 }
 
+// Разбирает строку "YYYY-MM-DD" (как отдаёт <input type="date">) в {y, m, d}.
+function parseLocalDateStr(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
+  if (!m) return null;
+  return { y: Number(m[1]), m: Number(m[2]) - 1, d: Number(m[3]) };
+}
+
+// Произвольный диапазон по датам "С" / "По" (по времени Костанай, "По" включительно).
+function customRange(fromStr, toStr) {
+  const f = parseLocalDateStr(fromStr);
+  if (!f) return null;
+  const t = parseLocalDateStr(toStr) || f;
+  const from = localMidnightToUTC(f.y, f.m, f.d);
+  let to = localMidnightToUTC(t.y, t.m, t.d + 1); // "по" включительно — до начала следующего дня
+  if (to.getTime() <= from.getTime()) to = localMidnightToUTC(f.y, f.m, f.d + 1);
+  return { from: from, to: to };
+}
+
 function fmtBitrixDate(d) {
   const local = new Date(d.getTime() + TZ_OFFSET_MIN * 60000);
   const p = (n) => (n < 10 ? "0" + n : "" + n);
@@ -265,8 +283,7 @@ async function resolveAssignees(webhookUrl, method, ids) {
 }
 
 /* ---------------- сводный отчёт с лентой событий ---------------- */
-async function getManagerReport(webhookUrl, period) {
-  const range = periodRange(period);
+async function getManagerReport(webhookUrl, range) {
   const { from, to } = range;
 
   const [users, dealStageInfo, leadStatusInfo, dealHistory, leadHistory] = await Promise.all([
@@ -421,12 +438,11 @@ async function getManagerReport(webhookUrl, period) {
   rows.sort((a, b) => (b.created + b.moved) - (a.created + a.moved));
 
   return {
-    period: period,
-    from: range.from.toISOString(),
-    to: range.to.toISOString(),
+    from: from.toISOString(),
+    to: to.toISOString(),
     rows: rows,
     hasUserNames: Object.keys(users).length > 0,
   };
 }
 
-module.exports = { getManagerReport, periodRange };
+module.exports = { getManagerReport, periodRange, customRange };

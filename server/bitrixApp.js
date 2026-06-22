@@ -218,6 +218,28 @@ async function fetchLastStages(entityTypeId, entityId, limit) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Сразу после прихода события история этапов в Bitrix24 иногда ещё не успевает
+// записаться (короткая задержка на их стороне) — поэтому одной попытки часто
+// не хватает: самая свежая запись истории не совпадает с текущим этапом, и
+// мы зря решаем, что "изменений не было". Пробуем несколько раз с паузой —
+// ответ на вебхук это не задерживает, он уже отправлен раньше.
+async function fetchPrevStageWithRetry(entityTypeId, entityId, currentStage) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(1200);
+    const stages = await fetchLastStages(entityTypeId, entityId, 5);
+    if (stages.length >= 2 && String(stages[0].STAGE_ID) === String(currentStage)) {
+      console.log("[bitrix] fetchPrevStageWithRetry: нашёл prevStage=" + stages[1].STAGE_ID + " (попытка " + (attempt + 1) + ")");
+      return stages[1].STAGE_ID;
+    }
+  }
+  console.log("[bitrix] fetchPrevStageWithRetry: не удалось определить предыдущий этап после нескольких попыток");
+  return null;
+}
+
 async function bindEvents() {
   const handler = PUBLIC_BASE_URL + "/bitrix/event";
   const results = [];
@@ -305,15 +327,12 @@ async function handleEvent(parsed) {
   // update — сравниваем с последним известным этапом, чтобы понять, было ли это перемещение.
   // Если файловый кэш пуст (например, сервер перезапустился) — не сдаёмся и не уходим
   // в догадки по "текущему ответственному": спрашиваем у самого Bitrix24 историю этапов
-  // этой карточки, она у них не теряется, и восстанавливаем точный "откуда" этап.
+  // этой карточки, она у них не теряется, и восстанавливаем точный "откуда" этап. Сразу
+  // после события история может ещё не успеть записаться — пробуем несколько раз с паузой.
   let prevStage = store.getCachedStage(meta.type, entityId);
   if (prevStage == null && currentStage != null) {
     const entityTypeId = meta.type === "deal" ? 2 : 1;
-    const stages = await fetchLastStages(entityTypeId, entityId, 5);
-    if (stages.length >= 2 && String(stages[0].STAGE_ID) === String(currentStage)) {
-      prevStage = stages[1].STAGE_ID;
-      console.log("[bitrix] handleEvent: локальный кэш этапа пуст — восстановил prevStage=" + prevStage + " из истории Bitrix24");
-    }
+    prevStage = await fetchPrevStageWithRetry(entityTypeId, entityId, currentStage);
   }
   console.log("[bitrix] handleEvent: update " + meta.type + " #" + entityId + " prevStage=" + prevStage + " currentStage=" + currentStage + " actor=" + (actor ? actor.id + " " + actor.name : "null"));
   if (currentStage != null && prevStage != null && String(currentStage) !== String(prevStage)) {

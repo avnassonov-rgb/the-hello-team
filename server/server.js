@@ -195,10 +195,14 @@ const server = http.createServer((req, res) => {
       if (!webhookUrl) {
         return sendJSON(res, 200, { ok: false, error: "no_webhook", message: "Вебхук Bitrix24 не настроен. Задайте переменную окружения BITRIX_WEBHOOK_URL в настройках Render." });
       }
-      const allowedPeriods = ["today", "yesterday", "week", "month"];
-      let period = parsed.query && parsed.query.period;
-      if (allowedPeriods.indexOf(period) === -1) period = "today";
-      return bitrix.getManagerReport(webhookUrl, period)
+      const q = parsed.query || {};
+      let range = q.from ? bitrix.customRange(q.from, q.to || q.from) : null;
+      if (!range) {
+        const allowedPeriods = ["today", "yesterday", "week", "month"];
+        const period = allowedPeriods.indexOf(q.period) !== -1 ? q.period : "today";
+        range = bitrix.periodRange(period);
+      }
+      return bitrix.getManagerReport(webhookUrl, range)
         .then((report) => sendJSON(res, 200, { ok: true, report: report }))
         .catch((err) => sendJSON(res, 200, { ok: false, error: "bitrix_error", message: err.message }));
     }
