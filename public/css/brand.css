@@ -157,7 +157,18 @@ button{font-family:inherit;}
   font-size:13px;line-height:1.5;color:rgba(31,31,31,.65);
 }
 .mgr-real{color:#2e7d32;font-size:11px;}
-.period-switch{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px;}
+.period-switch{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px;align-items:flex-end;}
+.period-date-field{
+  display:flex;flex-direction:column;gap:4px;
+  font-family:'Montserrat',sans-serif;font-size:11px;font-weight:600;letter-spacing:.03em;
+  color:rgba(31,31,31,.55);text-transform:uppercase;
+}
+.period-date-field input[type="date"]{
+  border:1px solid var(--outline);border-radius:999px;padding:9px 16px;
+  font-family:'Montserrat',sans-serif;font-weight:600;font-size:13px;color:var(--ink);
+  background:#fff;cursor:pointer;
+}
+.period-date-field input[type="date"]:focus{outline:2px solid var(--pink);outline-offset:1px;}
 .pbtn{
   border:1px solid var(--outline);background:transparent;color:var(--ink);
   font-family:'Montserrat',sans-serif;font-weight:600;font-size:13px;
