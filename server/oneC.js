@@ -265,13 +265,17 @@ async function refresh() {
   realizations.forEach((r) => { if (r.ДокументОснование) shippedSet.add(String(r.ДокументОснование)); });
 
   // Активные (не удалённые, не отгруженные) счета — только для них имеет смысл
-  // тянуть товарные позиции отдельным запросом.
+  // тянуть товарные позиции отдельным запросом. Считаем причины отсева отдельно —
+  // это видно в статусе синхронизации и помогает понять, на каком шаге пропали заказы.
+  let skippedDeleted = 0;
+  let skippedShipped = 0;
+  let skippedNoNumber = 0;
   const activeInvoices = invoicesAll.filter((inv) => {
-    if (inv.DeletionMark) return false;
-    if (inv.Ref_Key && shippedSet.has(String(inv.Ref_Key))) return false;
-    return !!String(inv.Number || "").trim();
+    if (inv.DeletionMark) { skippedDeleted++; return false; }
+    if (inv.Ref_Key && shippedSet.has(String(inv.Ref_Key))) { skippedShipped++; return false; }
+    if (!String(inv.Number || "").trim()) { skippedNoNumber++; return false; }
+    return true;
   });
-  const skippedShipped = invoicesAll.length - activeInvoices.length;
 
   const tovaryResults = await mapWithConcurrency(activeInvoices, 4, (inv) =>
     fetchTovaryForInvoice(inv.Ref_Key)
@@ -313,6 +317,16 @@ async function refresh() {
     itemsCount: itemsRaw.length,
     skippedShipped,
     expandUsed,
+    // диагностика — чтобы по одному скриншоту понять, на каком шаге пропали заказы
+    debug: {
+      totalFetched: invoicesAll.length,
+      skippedDeleted,
+      skippedShipped,
+      skippedNoNumber,
+      realizCount: realizations.length,
+      shippedSetSize: shippedSet.size,
+      filter: ordersFilter,
+    },
   };
 
   store.patchState({ ordersRaw, itemsRaw, meta });
