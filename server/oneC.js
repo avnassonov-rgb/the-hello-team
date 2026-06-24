@@ -241,8 +241,14 @@ async function refresh() {
 
   const year = new Date().getFullYear();
   const dateFrom = "datetime'" + year + "-01-01T00:00:00'";
-  const ordersFilter = "Posted eq true and Date ge " + dateFrom;
-  const realizFilter = ordersFilter;
+  // У Александра склад делает отгрузку и сразу создаёт документ "Реализация",
+  // но НЕ проводит его — бухгалтерия проводит реализации позже, пост-фактум,
+  // при закрытии месяца. Значит факт отгрузки = существование документа
+  // "Реализация" с такой-то датой/основанием, а не его статус Posted.
+  // Поэтому ни для счетов, ни для реализаций мы не фильтруем по Posted —
+  // только по дате.
+  const ordersFilter = "Date ge " + dateFrom;
+  const realizFilter = "Date ge " + dateFrom;
 
   const { rows: invoicesAll, expandUsed } = await fetchInvoices(ordersFilter);
   console.log("[1C] счета получены, $expand=" + (expandUsed || "(без expand)") + ", строк: " + invoicesAll.length);
@@ -260,7 +266,8 @@ async function refresh() {
   const nomMap = new Map();
   nomRows.forEach((r) => { if (r.Ref_Key) nomMap.set(r.Ref_Key, r.Description || ""); });
 
-  // Множество Ref_Key счетов, на основании которых уже сделана отгрузка (Реализация).
+  // Множество Ref_Key счетов, на основании которых уже сделана отгрузка (Реализация),
+  // независимо от того, проведена ли реализация — см. комментарий выше про dateFrom.
   const shippedSet = new Set();
   realizations.forEach((r) => { if (r.ДокументОснование) shippedSet.add(String(r.ДокументОснование)); });
 
