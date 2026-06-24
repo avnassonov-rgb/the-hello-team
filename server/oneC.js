@@ -225,7 +225,9 @@ function buildOrderAndItems(inv, tovaryRows, nomMap) {
     const qty = parseFloat(row.Количество) || 0;
     if (!qty) return;
     let name = (row.Номенклатура && row.Номенклатура.Description) || "";
-    if (!name && row.Номенклатура_Key) name = nomMap.get(row.Номенклатура_Key) || "";
+    // Сравниваем GUID без учёта регистра букв — 1С не всегда отдаёт их в одном
+    // и том же регистре в разных наборах данных (справочник vs табличная часть).
+    if (!name && row.Номенклатура_Key) name = nomMap.get(String(row.Номенклатура_Key).toLowerCase()) || "";
     if (!name) name = "Неизвестная позиция (" + (row.Номенклатура_Key || "?") + ")";
     items.push({ order: number, product: name, qty });
   });
@@ -264,7 +266,7 @@ async function refresh() {
   });
 
   const nomMap = new Map();
-  nomRows.forEach((r) => { if (r.Ref_Key) nomMap.set(r.Ref_Key, r.Description || ""); });
+  nomRows.forEach((r) => { if (r.Ref_Key) nomMap.set(String(r.Ref_Key).toLowerCase(), r.Description || ""); });
 
   // Множество Ref_Key счетов, на основании которых уже сделана отгрузка (Реализация),
   // независимо от того, проведена ли реализация — см. комментарий выше про dateFrom.
@@ -315,6 +317,8 @@ async function refresh() {
     throw new Error("не удалось получить товары ни для одного счёта — последняя ошибка: " + firstTovaryError);
   }
 
+  const unknownItemsCount = itemsRaw.filter((it) => /^Неизвестная позиция/.test(it.product)).length;
+
   const meta = {
     source: "1c",
     lastSyncAt: new Date().toISOString(),
@@ -325,6 +329,7 @@ async function refresh() {
     skippedShipped,
     expandUsed,
     // диагностика — чтобы по одному скриншоту понять, на каком шаге пропали заказы
+    // или не распознались наименования товаров
     debug: {
       totalFetched: invoicesAll.length,
       skippedDeleted,
@@ -333,6 +338,8 @@ async function refresh() {
       realizCount: realizations.length,
       shippedSetSize: shippedSet.size,
       filter: ordersFilter,
+      nomCount: nomRows.length,
+      unknownItemsCount,
     },
   };
 
