@@ -10,6 +10,7 @@ const store = require("./store");
 const auth = require("./auth");
 const bitrix = require("./bitrix");
 const bitrixApp = require("./bitrixApp");
+const oneC = require("./oneC");
 
 const INSTALL_HTML = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
   "<title>THE HELLO — установка приложения</title></head>" +
@@ -190,6 +191,11 @@ const server = http.createServer((req, res) => {
         sendJSON(res, 200, { ok: true });
       });
     }
+    if (pathname === "/api/onec/refresh" && req.method === "POST") {
+      return oneC.refreshSafe().then((result) => {
+        sendJSON(res, 200, { ok: result.ok, error: result.error || null, state: store.readState() });
+      });
+    }
     if (pathname === "/api/bitrix/report" && req.method === "GET") {
       const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
       if (!webhookUrl) {
@@ -226,4 +232,14 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`THE HELLO Team — сервер запущен: http://localhost:${PORT}`);
   console.log(`Пароль входа: ${process.env.APP_PASSWORD ? "(задан в APP_PASSWORD)" : "thehello2026 (стандартный — смените перед публикацией!)"}`);
+
+  // ---- автосинк с 1С: план производства теперь обновляется сам, без ручной загрузки файлов ----
+  const ONE_C_INTERVAL_MS = 5 * 60 * 1000;
+  if (process.env.ONEC_PASSWORD) {
+    console.log("[1C] автосинк включён — обновление каждые 5 минут");
+    setTimeout(() => { oneC.refreshSafe(); }, 3000); // первый запуск чуть после старта
+    setInterval(() => { oneC.refreshSafe(); }, ONE_C_INTERVAL_MS);
+  } else {
+    console.log("[1C] автосинк выключен — не задана переменная окружения ONEC_PASSWORD");
+  }
 });

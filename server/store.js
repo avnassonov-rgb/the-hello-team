@@ -17,7 +17,10 @@ const DEFAULT_STATE = {
   itemsRaw: null,
   settings: null, // null => клиент возьмёт Engine.DEFAULT_SETTINGS
   control: null, // null => клиент возьмёт Engine.DEFAULT_CONTROL
-  meta: { ordersFileName: null, itemsFileName: null, uploadedAt: null },
+  meta: {
+    ordersFileName: null, itemsFileName: null, uploadedAt: null, // старые поля (ручная загрузка, оставлены для совместимости)
+    source: null, lastSyncAt: null, lastSyncOk: null, lastSyncError: null, ordersCount: null, itemsCount: null, // автосинк с 1С
+  },
   // ---- Bitrix24: локальное приложение для точной атрибуции событий ----
   bitrixApp: null, // { accessToken, refreshToken, expiresAt, domain, memberId, clientEndpoint }
   bitrixEvents: [], // [{ time, entityType, entityId, type, fromStage, toStage, actorId, actorName }]
