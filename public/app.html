@@ -30,16 +30,13 @@
     </div>
     <div class="tr-right">
       <div class="files">
-        <label class="filepill" id="pillOrders">
-          <div class="lbl">Файл 1 | не отгруженные заказы</div>
-          <div class="nm empty" id="nmOrders">не загружен</div>
-          <input type="file" id="fileOrders" accept=".xls,.xlsx">
+        <label class="filepill" id="pillSync">
+          <div class="lbl">Данные из 1С</div>
+          <div class="nm empty" id="nmSync">синхронизация...</div>
         </label>
-        <label class="filepill" id="pillItems">
-          <div class="lbl">Файл 2 | универсальный отчёт</div>
-          <div class="nm empty" id="nmItems">не загружен</div>
-          <input type="file" id="fileItems" accept=".xls,.xlsx">
-        </label>
+        <button class="btn-icon" id="syncRefreshBtn" type="button" title="Обновить сейчас">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        </button>
         <button class="btn-icon" id="logoutBtn" title="Выйти"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v8"/><path d="M18.4 6.6a8 8 0 1 1-12.8 0"/></svg></button>
       </div>
       <div class="stamp-line" id="stampLine"></div>
@@ -92,7 +89,7 @@
 
     <div id="planEmpty" class="empty-state">
       <h3>Нет данных для расчёта</h3>
-      <p>Загрузите два файла из 1С через кнопки в шапке: «не отгруженные» (заказы) и «универсальный отчёт» (позиции). Данные сохранятся на сервере — все, кто откроет эту ссылку, увидят один и тот же расчёт без повторной загрузки.</p>
+      <p>Данные подгружаются автоматически из 1С каждые 5 минут. Если данных пока нет — подождите первую синхронизацию или нажмите кнопку обновления в шапке.</p>
     </div>
 
     <div id="planContent" class="hidden">
@@ -171,7 +168,6 @@
 
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="/js/engine.js"></script>
 <script src="/js/app.js"></script>
 </body>
