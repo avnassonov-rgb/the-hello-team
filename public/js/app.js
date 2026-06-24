@@ -74,15 +74,7 @@
     }
     if (stamp) {
       if (meta.lastSyncAt) {
-        var dbg = meta.debug;
-        var dbgTxt = dbg ? (" · получено счетов: " + dbg.totalFetched + ", удалено: " + dbg.skippedDeleted + ", отгружено: " + dbg.skippedShipped + ", без номера: " + dbg.skippedNoNumber + ", реализаций: " + dbg.realizCount + ", в справочнике товаров: " + dbg.nomCount + ", в характеристиках: " + (dbg.charCount != null ? dbg.charCount : "—") + ", не распознано позиций: " + dbg.unknownItemsCount +
-          " · счёт.expand: " + (dbg.expandUsed || "нет") + ", тов.expand: " + (dbg.tovaryExpand || "нет") +
-          ", без ответственного: " + dbg.respEmptyCount + (dbg.respSample ? " (пример: " + dbg.respSample + ")" : "") +
-          (dbg.invoiceExpandError ? (" · ошибка expand счетов: " + dbg.invoiceExpandError) : "") +
-          (dbg.charFetchError ? (" · ошибка справочника характеристик: " + dbg.charFetchError) : "") +
-          (dbg.unresolvedSampleJson ? (" · пример нераспознанной строки товара: " + dbg.unresolvedSampleJson) : "") +
-          (dbg.directLookup ? (" · прямой запрос по GUID " + dbg.directLookup.key + ": " + (dbg.directLookup.found ? ("найден — " + dbg.directLookup.data) : ("не найден — " + dbg.directLookup.error))) : "")) : "";
-        stamp.textContent = (meta.lastSyncOk === false ? "Ошибка: " + (meta.lastSyncError || "") + " · посл. попытка " : "Обновлено: ") + fmtDateTime(meta.lastSyncAt) + dbgTxt;
+        stamp.textContent = (meta.lastSyncOk === false ? "Ошибка: " + (meta.lastSyncError || "") + " · посл. попытка " : "Обновлено: ") + fmtDateTime(meta.lastSyncAt) + " · обновляется автоматически каждые 5 минут";
       } else {
         stamp.textContent = "";
       }
