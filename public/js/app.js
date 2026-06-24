@@ -80,7 +80,8 @@
           ", без ответственного: " + dbg.respEmptyCount + (dbg.respSample ? " (пример: " + dbg.respSample + ")" : "") +
           (dbg.invoiceExpandError ? (" · ошибка expand счетов: " + dbg.invoiceExpandError) : "") +
           (dbg.charFetchError ? (" · ошибка справочника характеристик: " + dbg.charFetchError) : "") +
-          (dbg.unresolvedSampleJson ? (" · пример нераспознанной строки товара: " + dbg.unresolvedSampleJson) : "")) : "";
+          (dbg.unresolvedSampleJson ? (" · пример нераспознанной строки товара: " + dbg.unresolvedSampleJson) : "") +
+          (dbg.directLookup ? (" · прямой запрос по GUID " + dbg.directLookup.key + ": " + (dbg.directLookup.found ? ("найден — " + dbg.directLookup.data) : ("не найден — " + dbg.directLookup.error))) : "")) : "";
         stamp.textContent = (meta.lastSyncOk === false ? "Ошибка: " + (meta.lastSyncError || "") + " · посл. попытка " : "Обновлено: ") + fmtDateTime(meta.lastSyncAt) + dbgTxt;
       } else {
         stamp.textContent = "";
