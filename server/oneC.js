@@ -3,16 +3,17 @@
    Заменяет ручную загрузку двух xls-файлов — данные берутся прямо из 1С по расписанию.
 
    Источники данных (точные имена взяты из $metadata):
-   - Document_СчетНаОплатуПокупателю   — заказы (= старый файл "не отгруженные")
-   - Document_СчетНаОплатуПокупателюТовары — позиции этих счетов (= старый "универсальный
-     отчёт"), отдельный набор сущностей (табличная часть нельзя получить через $expand —
-     1С отдаёт ошибку "допустимы только ссылочные реквизиты"), сопоставляем по Ref_Key
-     счёта-владельца сами — точное совпадение по GUID, без текстового парсинга "Счёт NNN от...".
+   - Document_СчетНаОплатуПокупателю   — заказы (= старый файл "не отгруженные").
+     Товарные позиции (= старый "универсальный отчёт") лежат внутри как коллекция
+     "Товары" — забираем через $expand. У этого сервиса 1С есть нюанс: не все
+     комбинации $expand разрешены (некоторые поля требуют отдельного синтаксиса
+     для "составных" ссылок) — поэтому ниже код сам пробует несколько вариантов
+     $expand от полного к урезанному, пока не найдёт рабочий.
    - Document_РеализацияТоваровУслуг   — отгрузки; поле "ДокументОснование" содержит
      Ref_Key счёта, на основании которого сделана отгрузка. Если такой счёт нашёлся —
      значит он уже отгружен, в план производства его включать не нужно.
-   - Catalog_Номенклатура               — справочник товаров, для имени позиции
-     (в Товары хранится только Номенклатура_Key — GUID).
+   - Catalog_Номенклатура               — справочник товаров, для имени позиции, если
+     его не отдал $expand внутри Товары (запасной путь).
 
    ЛОГИКА РАСЧЁТА (engine.js) НЕ ЗАТРАГИВАЕТСЯ — этот модуль только готовит
    ordersRaw/itemsRaw в том же формате, что раньше присылал браузер после
@@ -49,7 +50,7 @@ function httpGetJSON(fullUrl) {
     try {
       u = new URL(fullUrl);
     } catch (e) {
-      return reject(new Error("1С OData: некорректный адрес — " + fullUrl));
+      return reject(new Error("некорректный адрес — " + fullUrl));
     }
     const auth = Buffer.from(oneCUser() + ":" + oneCPassword()).toString("base64");
     const options = {
@@ -69,20 +70,24 @@ function httpGetJSON(fullUrl) {
       res.on("end", () => {
         const raw = Buffer.concat(chunks).toString("utf8");
         if (res.statusCode === 401 || res.statusCode === 403) {
-          return reject(new Error("1С OData: доступ запрещён (" + res.statusCode + ") — проверьте ONEC_USER/ONEC_PASSWORD"));
+          return reject(new Error("доступ запрещён (" + res.statusCode + ") — проверьте ONEC_USER/ONEC_PASSWORD"));
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error("1С OData [" + res.statusCode + "]: " + raw.slice(0, 300)));
+          return reject(new Error("HTTP " + res.statusCode + ": " + raw.slice(0, 300)));
+        }
+        const looksHtml = /^\s*<(!DOCTYPE|html)/i.test(raw);
+        if (looksHtml) {
+          return reject(new Error("сервис 1С вернул HTML-страницу вместо данных (адрес/набор сущностей не найден или не опубликован для OData)"));
         }
         try {
           resolve(JSON.parse(raw));
         } catch (e) {
-          reject(new Error("1С OData: ответ не в формате JSON: " + raw.slice(0, 200)));
+          reject(new Error("ответ не в формате JSON: " + raw.slice(0, 200)));
         }
       });
     });
-    req.on("error", (e) => reject(new Error("1С OData: " + e.message)));
-    req.on("timeout", () => req.destroy(new Error("1С OData: таймаут запроса")));
+    req.on("error", (e) => reject(new Error(e.message)));
+    req.on("timeout", () => req.destroy(new Error("таймаут запроса")));
     req.end();
   });
 }
@@ -119,7 +124,12 @@ async function fetchEntitySet(entityName, opts) {
     if (opts.expand) params["$expand"] = opts.expand;
     if (opts.select) params["$select"] = opts.select;
     const full = baseUrl() + entityName + "?" + buildQuery(params);
-    const json = await httpGetJSON(full);
+    let json;
+    try {
+      json = await httpGetJSON(full);
+    } catch (e) {
+      throw new Error("[" + entityName + (opts.expand ? " $expand=" + opts.expand : "") + "] " + e.message);
+    }
     const chunk = extractArray(json);
     all = all.concat(chunk);
     if (chunk.length < pageSize) break;
@@ -128,9 +138,39 @@ async function fetchEntitySet(entityName, opts) {
   return all;
 }
 
+/* Заказы + товары: у этого сервиса 1С не все поля можно комбинировать в одном $expand
+   (некоторые ссылки "составные" и требуют другого синтаксиса). Пробуем по убыванию
+   полноты, начиная с самого нужного — без "Товары" план производства посчитать
+   нельзя, поэтому если ни один вариант с "Товары" не сработал — явно сообщаем об
+   этом, а не молча отдаём заказы без позиций. */
+const INVOICE_EXPAND_ATTEMPTS = [
+  "Товары,Ответственный,Контрагент",
+  "Товары,Ответственный",
+  "Товары,Контрагент",
+  "Товары",
+];
+
+async function fetchInvoicesAdaptive(filter) {
+  let lastErr = null;
+  for (const expand of INVOICE_EXPAND_ATTEMPTS) {
+    try {
+      const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", { filter, expand });
+      return { rows, expandUsed: expand };
+    } catch (e) {
+      lastErr = e;
+      // Если ошибка явно не про $expand — нет смысла перебирать дальше, это другая проблема
+      // (сеть, авторизация, неверный $filter) — сразу её и показываем.
+      if (!/expand/i.test(e.message)) throw e;
+    }
+  }
+  throw new Error(
+    "не удалось получить товарные позиции счетов ни с одним набором $expand — последняя ошибка: " +
+      (lastErr ? lastErr.message : "?")
+  );
+}
+
 /* ---------------- преобразование счёта в order + items (формат engine.js) ---------------- */
-// rows — строки табличной части (Document_СчетНаОплатуПокупателюТовары), относящиеся к этому счёту.
-function buildOrderAndItems(inv, rows, nomMap) {
+function buildOrderAndItems(inv, nomMap) {
   const number = String(inv.Number || "").trim();
   const date = inv.Date ? new Date(inv.Date) : null;
   const sum = parseFloat(inv.СуммаДокумента) || 0;
@@ -149,7 +189,8 @@ function buildOrderAndItems(inv, rows, nomMap) {
   };
 
   const items = [];
-  (rows || []).forEach((row) => {
+  const rows = Array.isArray(inv.Товары) ? inv.Товары : [];
+  rows.forEach((row) => {
     const qty = parseFloat(row.Количество) || 0;
     if (!qty) return;
     let name = (row.Номенклатура && row.Номенклатура.Description) || "";
@@ -172,39 +213,21 @@ async function refresh() {
   const ordersFilter = "Posted eq true and Date ge " + dateFrom;
   const realizFilter = ordersFilter;
 
-  // ВАЖНО: "Товары" — табличная часть (коллекция), а не ссылочный реквизит, поэтому
-  // 1С не разрешает её в $expand (ошибка "допустимы только ссылочные реквизиты...").
-  // Позиции счетов выгружаем отдельным запросом из своего набора сущностей и потом
-  // сами сопоставляем со счетами по Ref_Key.
-  const [invoices, tovaryRows, realizations, nomRows] = await Promise.all([
-    fetchEntitySet("Document_СчетНаОплатуПокупателю", {
-      filter: ordersFilter,
-      expand: "Ответственный,Контрагент",
-    }),
-    fetchEntitySet("Document_СчетНаОплатуПокупателюТовары", {
-      select: "Ref_Key,Номенклатура_Key,Количество",
-      pageSize: 500,
-    }),
-    fetchEntitySet("Document_РеализацияТоваровУслуг", {
-      filter: realizFilter,
-      select: "ДокументОснование,ДокументОснование_Type",
-    }),
-    fetchEntitySet("Catalog_Номенклатура", {
-      select: "Ref_Key,Description",
-      pageSize: 500,
-    }),
-  ]);
+  const { rows: invoices, expandUsed } = await fetchInvoicesAdaptive(ordersFilter);
+  console.log("[1C] счета получены, $expand=" + expandUsed + ", строк: " + invoices.length);
+
+  const realizations = await fetchEntitySet("Document_РеализацияТоваровУслуг", {
+    filter: realizFilter,
+    select: "ДокументОснование,ДокументОснование_Type",
+  });
+
+  const nomRows = await fetchEntitySet("Catalog_Номенклатура", {
+    select: "Ref_Key,Description",
+    pageSize: 500,
+  });
 
   const nomMap = new Map();
   nomRows.forEach((r) => { if (r.Ref_Key) nomMap.set(r.Ref_Key, r.Description || ""); });
-
-  // Группируем строки табличной части по Ref_Key счёта-владельца.
-  const tovaryByRef = new Map();
-  tovaryRows.forEach((row) => {
-    if (!row.Ref_Key) return;
-    if (!tovaryByRef.has(row.Ref_Key)) tovaryByRef.set(row.Ref_Key, []);
-    tovaryByRef.get(row.Ref_Key).push(row);
-  });
 
   // Множество Ref_Key счетов, на основании которых уже сделана отгрузка (Реализация).
   const shippedSet = new Set();
@@ -217,8 +240,7 @@ async function refresh() {
   invoices.forEach((inv) => {
     if (inv.DeletionMark) return;
     if (inv.Ref_Key && shippedSet.has(String(inv.Ref_Key))) { skippedShipped++; return; }
-    const rows = inv.Ref_Key ? tovaryByRef.get(inv.Ref_Key) : null;
-    const built = buildOrderAndItems(inv, rows, nomMap);
+    const built = buildOrderAndItems(inv, nomMap);
     if (!built.order.number) return;
     ordersRaw.push(built.order);
     itemsRaw = itemsRaw.concat(built.items);
@@ -232,6 +254,7 @@ async function refresh() {
     ordersCount: ordersRaw.length,
     itemsCount: itemsRaw.length,
     skippedShipped,
+    expandUsed,
   };
 
   store.patchState({ ordersRaw, itemsRaw, meta });
