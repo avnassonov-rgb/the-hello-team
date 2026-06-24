@@ -4,8 +4,10 @@
 
    Источники данных (точные имена взяты из $metadata):
    - Document_СчетНаОплатуПокупателю   — заказы (= старый файл "не отгруженные")
-     каждый счёт содержит коллекцию "Товары" — позиции (= старый "универсальный отчёт"),
-     поэтому отдельного сопоставления по тексту "Счёт NNN от ..." больше не нужно.
+   - Document_СчетНаОплатуПокупателюТовары — позиции этих счетов (= старый "универсальный
+     отчёт"), отдельный набор сущностей (табличная часть нельзя получить через $expand —
+     1С отдаёт ошибку "допустимы только ссылочные реквизиты"), сопоставляем по Ref_Key
+     счёта-владельца сами — точное совпадение по GUID, без текстового парсинга "Счёт NNN от...".
    - Document_РеализацияТоваровУслуг   — отгрузки; поле "ДокументОснование" содержит
      Ref_Key счёта, на основании которого сделана отгрузка. Если такой счёт нашёлся —
      значит он уже отгружен, в план производства его включать не нужно.
@@ -127,12 +129,13 @@ async function fetchEntitySet(entityName, opts) {
 }
 
 /* ---------------- преобразование счёта в order + items (формат engine.js) ---------------- */
-function buildOrderAndItems(inv, nomMap) {
+// rows — строки табличной части (Document_СчетНаОплатуПокупателюТовары), относящиеся к этому счёту.
+function buildOrderAndItems(inv, rows, nomMap) {
   const number = String(inv.Number || "").trim();
   const date = inv.Date ? new Date(inv.Date) : null;
   const sum = parseFloat(inv.СуммаДокумента) || 0;
   const resp = (inv.Ответственный && (inv.Ответственный.Description || inv.Ответственный.Code)) || "";
-  const contr = (inv.Контрагент && inv.Контрагент.Description) || "";
+  const contr = (inv.Контрагент && (inv.Контрагент.Description || inv.Контрагент.Code)) || "";
   const com = inv.Комментарий || "";
 
   const order = {
@@ -146,8 +149,7 @@ function buildOrderAndItems(inv, nomMap) {
   };
 
   const items = [];
-  const rows = Array.isArray(inv.Товары) ? inv.Товары : [];
-  rows.forEach((row) => {
+  (rows || []).forEach((row) => {
     const qty = parseFloat(row.Количество) || 0;
     if (!qty) return;
     let name = (row.Номенклатура && row.Номенклатура.Description) || "";
@@ -170,10 +172,18 @@ async function refresh() {
   const ordersFilter = "Posted eq true and Date ge " + dateFrom;
   const realizFilter = ordersFilter;
 
-  const [invoices, realizations, nomRows] = await Promise.all([
+  // ВАЖНО: "Товары" — табличная часть (коллекция), а не ссылочный реквизит, поэтому
+  // 1С не разрешает её в $expand (ошибка "допустимы только ссылочные реквизиты...").
+  // Позиции счетов выгружаем отдельным запросом из своего набора сущностей и потом
+  // сами сопоставляем со счетами по Ref_Key.
+  const [invoices, tovaryRows, realizations, nomRows] = await Promise.all([
     fetchEntitySet("Document_СчетНаОплатуПокупателю", {
       filter: ordersFilter,
-      expand: "Товары,Ответственный,Контрагент",
+      expand: "Ответственный,Контрагент",
+    }),
+    fetchEntitySet("Document_СчетНаОплатуПокупателюТовары", {
+      select: "Ref_Key,Номенклатура_Key,Количество",
+      pageSize: 500,
     }),
     fetchEntitySet("Document_РеализацияТоваровУслуг", {
       filter: realizFilter,
@@ -181,11 +191,20 @@ async function refresh() {
     }),
     fetchEntitySet("Catalog_Номенклатура", {
       select: "Ref_Key,Description",
+      pageSize: 500,
     }),
   ]);
 
   const nomMap = new Map();
   nomRows.forEach((r) => { if (r.Ref_Key) nomMap.set(r.Ref_Key, r.Description || ""); });
+
+  // Группируем строки табличной части по Ref_Key счёта-владельца.
+  const tovaryByRef = new Map();
+  tovaryRows.forEach((row) => {
+    if (!row.Ref_Key) return;
+    if (!tovaryByRef.has(row.Ref_Key)) tovaryByRef.set(row.Ref_Key, []);
+    tovaryByRef.get(row.Ref_Key).push(row);
+  });
 
   // Множество Ref_Key счетов, на основании которых уже сделана отгрузка (Реализация).
   const shippedSet = new Set();
@@ -198,7 +217,8 @@ async function refresh() {
   invoices.forEach((inv) => {
     if (inv.DeletionMark) return;
     if (inv.Ref_Key && shippedSet.has(String(inv.Ref_Key))) { skippedShipped++; return; }
-    const built = buildOrderAndItems(inv, nomMap);
+    const rows = inv.Ref_Key ? tovaryByRef.get(inv.Ref_Key) : null;
+    const built = buildOrderAndItems(inv, rows, nomMap);
     if (!built.order.number) return;
     ordersRaw.push(built.order);
     itemsRaw = itemsRaw.concat(built.items);
