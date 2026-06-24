@@ -161,14 +161,20 @@ async function fetchInvoices(filter) {
 }
 
 /* Товарные позиции одного счёта — табличная часть документа недоступна через
-   $expand на этом сервере, поэтому обращаемся к ней напрямую по адресу вида
-   Document_СчетНаОплатуПокупателю(guid'...')/Товары — это стандартный способ
-   OData для доступа к коллекции конкретного документа. */
-async function fetchTovaryForInvoice(refKey) {
+   $expand на этом сервере (это коллекция), поэтому обращаемся к ней напрямую по
+   адресу вида Document_СчетНаОплатуПокупателю(guid'...')/Товары — это стандартный
+   способ OData для доступа к коллекции конкретного документа.
+   Поле "Номенклатура" внутри каждой строки товара — это уже одиночная ссылка
+   (не коллекция), поэтому для неё $expand работает (мы это проверили раньше на
+   полях Ответственный/Контрагент счёта) — запрашиваем её сразу, чтобы получить
+   название товара без отдельного похода в справочник Catalog_Номенклатура. */
+async function fetchTovaryForInvoice(refKey, expand) {
+  const params = { "$format": "json" };
+  if (expand) params["$expand"] = expand;
   const url =
     baseUrl() +
     "Document_СчетНаОплатуПокупателю(guid'" + refKey + "')/Товары?" +
-    buildQuery({ "$format": "json" });
+    buildQuery(params);
   let json;
   try {
     json = await httpGetJSON(url);
@@ -176,6 +182,19 @@ async function fetchTovaryForInvoice(refKey) {
     throw new Error("[Товары счёта " + refKey + "] " + e.message);
   }
   return extractArray(json);
+}
+
+/* Проверяем один раз (на первом активном счёте), можно ли расширить строку товара
+   ссылкой на Номенклатуру — если сервер ответит ошибкой про $expand, дальше для
+   всех счетов запрашиваем без него (и используем только справочник как раньше). */
+async function detectTovaryExpand(sampleRefKey) {
+  if (!sampleRefKey) return null;
+  try {
+    await fetchTovaryForInvoice(sampleRefKey, "Номенклатура");
+    return "Номенклатура";
+  } catch (e) {
+    return null;
+  }
 }
 
 /* Параллельная обработка с ограничением одновременных запросов — чтобы не
@@ -286,8 +305,10 @@ async function refresh() {
     return true;
   });
 
+  const tovaryExpand = await detectTovaryExpand(activeInvoices[0] && activeInvoices[0].Ref_Key);
+
   const tovaryResults = await mapWithConcurrency(activeInvoices, 4, (inv) =>
-    fetchTovaryForInvoice(inv.Ref_Key)
+    fetchTovaryForInvoice(inv.Ref_Key, tovaryExpand)
   );
 
   let tovaryFailCount = 0;
@@ -340,6 +361,7 @@ async function refresh() {
       filter: ordersFilter,
       nomCount: nomRows.length,
       unknownItemsCount,
+      tovaryExpand,
     },
   };
 
