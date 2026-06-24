@@ -220,7 +220,7 @@ async function mapWithConcurrency(items, limit, fn) {
 }
 
 /* ---------------- преобразование счёта в order + items (формат engine.js) ---------------- */
-function buildOrderAndItems(inv, tovaryRows, nomMap) {
+function buildOrderAndItems(inv, tovaryRows, nomMap, diag) {
   const number = String(inv.Number || "").trim();
   const date = inv.Date ? new Date(inv.Date) : null;
   const sum = parseFloat(inv.СуммаДокумента) || 0;
@@ -247,7 +247,13 @@ function buildOrderAndItems(inv, tovaryRows, nomMap) {
     // Сравниваем GUID без учёта регистра букв — 1С не всегда отдаёт их в одном
     // и том же регистре в разных наборах данных (справочник vs табличная часть).
     if (!name && row.Номенклатура_Key) name = nomMap.get(String(row.Номенклатура_Key).toLowerCase()) || "";
-    if (!name) name = "Неизвестная позиция (" + (row.Номенклатура_Key || "?") + ")";
+    if (!name) {
+      name = "Неизвестная позиция (" + (row.Номенклатура_Key || "?") + ")";
+      // Запоминаем "живой" пример нераспознанной строки (один раз) — чтобы по
+      // одному скриншоту понять, как именно 1С называет это поле на самом деле
+      // (вдруг это не Номенклатура, а Характеристика/другой тип ссылки).
+      if (diag && !diag.unresolvedSample) diag.unresolvedSample = row;
+    }
     items.push({ order: number, product: name, qty });
   });
 
@@ -315,6 +321,7 @@ async function refresh() {
   let firstTovaryError = null;
   const ordersRaw = [];
   let itemsRaw = [];
+  const diag = { unresolvedSample: null };
 
   activeInvoices.forEach((inv, i) => {
     const res = tovaryResults[i];
@@ -325,10 +332,19 @@ async function refresh() {
       tovaryFailCount++;
       if (!firstTovaryError) firstTovaryError = res.error.message;
     }
-    const built = buildOrderAndItems(inv, rows, nomMap);
+    const built = buildOrderAndItems(inv, rows, nomMap, diag);
     ordersRaw.push(built.order);
     itemsRaw = itemsRaw.concat(built.items);
   });
+
+  // Диагностика категоризации "Гос закуп": engine.js относит заказ к "гос" только
+  // если в поле "Ответственный" встречается ключевое слово — если расшифровка
+  // Ответственного не пришла (см. expandUsed выше), это поле у всех заказов будет
+  // пустым, и ВСЕ заказы провалятся в "Прочие заказы" независимо от реального
+  // распределения. Считаем, у скольких заказов оно пустое, и берём пару примеров
+  // непустых значений — видно по одному скриншоту, есть ли тут проблема.
+  const respEmptyCount = ordersRaw.filter((o) => !o.resp).length;
+  const respSample = ordersRaw.filter((o) => o.resp).slice(0, 2).map((o) => o.resp).join(" | ");
 
   // Если товары не удалось получить ВООБЩЕ ни для одного счёта — это не частный
   // сбой, а системная проблема (например, и этот способ доступа недоступен на
@@ -362,6 +378,9 @@ async function refresh() {
       nomCount: nomRows.length,
       unknownItemsCount,
       tovaryExpand,
+      respEmptyCount,
+      respSample,
+      unresolvedSampleJson: diag.unresolvedSample ? JSON.stringify(diag.unresolvedSample).slice(0, 400) : null,
     },
   };
 
