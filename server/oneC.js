@@ -4,16 +4,20 @@
 
    Источники данных (точные имена взяты из $metadata):
    - Document_СчетНаОплатуПокупателю   — заказы (= старый файл "не отгруженные").
-     Товарные позиции (= старый "универсальный отчёт") лежат внутри как коллекция
-     "Товары" — забираем через $expand. У этого сервиса 1С есть нюанс: не все
-     комбинации $expand разрешены (некоторые поля требуют отдельного синтаксиса
-     для "составных" ссылок) — поэтому ниже код сам пробует несколько вариантов
-     $expand от полного к урезанному, пока не найдёт рабочий.
+   - Товарные позиции каждого счёта — этот сервис 1С НЕ разрешает забирать через
+     $expand=Товары (сервер явно отвечает 501: "в опции $expand допустимы только
+     ссылочные реквизиты" — то есть только одиночные ссылки типа Ответственный/
+     Контрагент, но не табличные части/коллекции). Поэтому товары запрашиваются
+     отдельно для каждого счёта стандартным способом OData — обращением к его
+     табличной части по адресу вида:
+       Document_СчетНаОплатуПокупателю(guid'...')/Товары
+     Запросы идут с ограниченной параллельностью (см. mapWithConcurrency), чтобы
+     не перегружать сервер 1С большим числом одновременных соединений.
    - Document_РеализацияТоваровУслуг   — отгрузки; поле "ДокументОснование" содержит
      Ref_Key счёта, на основании которого сделана отгрузка. Если такой счёт нашёлся —
      значит он уже отгружен, в план производства его включать не нужно.
    - Catalog_Номенклатура               — справочник товаров, для имени позиции, если
-     его не отдал $expand внутри Товары (запасной путь).
+     его не отдал сервер внутри строки товара (запасной путь).
 
    ЛОГИКА РАСЧЁТА (engine.js) НЕ ЗАТРАГИВАЕТСЯ — этот модуль только готовит
    ordersRaw/itemsRaw в том же формате, что раньше присылал браузер после
@@ -138,39 +142,66 @@ async function fetchEntitySet(entityName, opts) {
   return all;
 }
 
-/* Заказы + товары: у этого сервиса 1С не все поля можно комбинировать в одном $expand
-   (некоторые ссылки "составные" и требуют другого синтаксиса). Пробуем по убыванию
-   полноты, начиная с самого нужного — без "Товары" план производства посчитать
-   нельзя, поэтому если ни один вариант с "Товары" не сработал — явно сообщаем об
-   этом, а не молча отдаём заказы без позиций. */
-const INVOICE_EXPAND_ATTEMPTS = [
-  "Товары,Ответственный,Контрагент",
-  "Товары,Ответственный",
-  "Товары,Контрагент",
-  "Товары",
-];
+/* Список счетов: пробуем получить с расшифровкой Ответственного/Контрагента (для
+   категоризации "Госзакуп" и т.п.), но это не критично — если сервер откажет и тут
+   (например, эти поля тоже окажутся "составными"), просто берём счета без них:
+   план производства всё равно посчитается, только разбивка по категориям пострадает. */
+async function fetchInvoices(filter) {
+  try {
+    const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
+      filter,
+      expand: "Ответственный,Контрагент",
+    });
+    return { rows, expandUsed: "Ответственный,Контрагент" };
+  } catch (e) {
+    if (!/expand/i.test(e.message)) throw e;
+    const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", { filter });
+    return { rows, expandUsed: null };
+  }
+}
 
-async function fetchInvoicesAdaptive(filter) {
-  let lastErr = null;
-  for (const expand of INVOICE_EXPAND_ATTEMPTS) {
-    try {
-      const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", { filter, expand });
-      return { rows, expandUsed: expand };
-    } catch (e) {
-      lastErr = e;
-      // Если ошибка явно не про $expand — нет смысла перебирать дальше, это другая проблема
-      // (сеть, авторизация, неверный $filter) — сразу её и показываем.
-      if (!/expand/i.test(e.message)) throw e;
+/* Товарные позиции одного счёта — табличная часть документа недоступна через
+   $expand на этом сервере, поэтому обращаемся к ней напрямую по адресу вида
+   Document_СчетНаОплатуПокупателю(guid'...')/Товары — это стандартный способ
+   OData для доступа к коллекции конкретного документа. */
+async function fetchTovaryForInvoice(refKey) {
+  const url =
+    baseUrl() +
+    "Document_СчетНаОплатуПокупателю(guid'" + refKey + "')/Товары?" +
+    buildQuery({ "$format": "json" });
+  let json;
+  try {
+    json = await httpGetJSON(url);
+  } catch (e) {
+    throw new Error("[Товары счёта " + refKey + "] " + e.message);
+  }
+  return extractArray(json);
+}
+
+/* Параллельная обработка с ограничением одновременных запросов — чтобы не
+   перегружать сервер 1С при большом числе счетов. */
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      try {
+        results[i] = { ok: true, value: await fn(items[i], i) };
+      } catch (e) {
+        results[i] = { ok: false, error: e };
+      }
     }
   }
-  throw new Error(
-    "не удалось получить товарные позиции счетов ни с одним набором $expand — последняя ошибка: " +
-      (lastErr ? lastErr.message : "?")
-  );
+  const workers = [];
+  const n = Math.max(1, Math.min(limit, items.length));
+  for (let i = 0; i < n; i++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
 }
 
 /* ---------------- преобразование счёта в order + items (формат engine.js) ---------------- */
-function buildOrderAndItems(inv, nomMap) {
+function buildOrderAndItems(inv, tovaryRows, nomMap) {
   const number = String(inv.Number || "").trim();
   const date = inv.Date ? new Date(inv.Date) : null;
   const sum = parseFloat(inv.СуммаДокумента) || 0;
@@ -189,7 +220,7 @@ function buildOrderAndItems(inv, nomMap) {
   };
 
   const items = [];
-  const rows = Array.isArray(inv.Товары) ? inv.Товары : [];
+  const rows = Array.isArray(tovaryRows) ? tovaryRows : [];
   rows.forEach((row) => {
     const qty = parseFloat(row.Количество) || 0;
     if (!qty) return;
@@ -213,8 +244,8 @@ async function refresh() {
   const ordersFilter = "Posted eq true and Date ge " + dateFrom;
   const realizFilter = ordersFilter;
 
-  const { rows: invoices, expandUsed } = await fetchInvoicesAdaptive(ordersFilter);
-  console.log("[1C] счета получены, $expand=" + expandUsed + ", строк: " + invoices.length);
+  const { rows: invoicesAll, expandUsed } = await fetchInvoices(ordersFilter);
+  console.log("[1C] счета получены, $expand=" + (expandUsed || "(без expand)") + ", строк: " + invoicesAll.length);
 
   const realizations = await fetchEntitySet("Document_РеализацияТоваровУслуг", {
     filter: realizFilter,
@@ -233,24 +264,51 @@ async function refresh() {
   const shippedSet = new Set();
   realizations.forEach((r) => { if (r.ДокументОснование) shippedSet.add(String(r.ДокументОснование)); });
 
+  // Активные (не удалённые, не отгруженные) счета — только для них имеет смысл
+  // тянуть товарные позиции отдельным запросом.
+  const activeInvoices = invoicesAll.filter((inv) => {
+    if (inv.DeletionMark) return false;
+    if (inv.Ref_Key && shippedSet.has(String(inv.Ref_Key))) return false;
+    return !!String(inv.Number || "").trim();
+  });
+  const skippedShipped = invoicesAll.length - activeInvoices.length;
+
+  const tovaryResults = await mapWithConcurrency(activeInvoices, 4, (inv) =>
+    fetchTovaryForInvoice(inv.Ref_Key)
+  );
+
+  let tovaryFailCount = 0;
+  let firstTovaryError = null;
   const ordersRaw = [];
   let itemsRaw = [];
-  let skippedShipped = 0;
 
-  invoices.forEach((inv) => {
-    if (inv.DeletionMark) return;
-    if (inv.Ref_Key && shippedSet.has(String(inv.Ref_Key))) { skippedShipped++; return; }
-    const built = buildOrderAndItems(inv, nomMap);
-    if (!built.order.number) return;
+  activeInvoices.forEach((inv, i) => {
+    const res = tovaryResults[i];
+    let rows = [];
+    if (res.ok) {
+      rows = res.value;
+    } else {
+      tovaryFailCount++;
+      if (!firstTovaryError) firstTovaryError = res.error.message;
+    }
+    const built = buildOrderAndItems(inv, rows, nomMap);
     ordersRaw.push(built.order);
     itemsRaw = itemsRaw.concat(built.items);
   });
+
+  // Если товары не удалось получить ВООБЩЕ ни для одного счёта — это не частный
+  // сбой, а системная проблема (например, и этот способ доступа недоступен на
+  // сервере) — план производства без единиц товара бессмысленен, поэтому в этом
+  // случае явно сообщаем об ошибке, а не сохраняем "пустой" план молча.
+  if (activeInvoices.length > 0 && tovaryFailCount === activeInvoices.length) {
+    throw new Error("не удалось получить товары ни для одного счёта — последняя ошибка: " + firstTovaryError);
+  }
 
   const meta = {
     source: "1c",
     lastSyncAt: new Date().toISOString(),
     lastSyncOk: true,
-    lastSyncError: null,
+    lastSyncError: tovaryFailCount > 0 ? ("товары не получены для " + tovaryFailCount + " счёт(ов): " + firstTovaryError) : null,
     ordersCount: ordersRaw.length,
     itemsCount: itemsRaw.length,
     skippedShipped,
