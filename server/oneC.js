@@ -48,7 +48,7 @@ function oneCPassword() {
 }
 
 /* ---------------- низкоуровневый GET с Basic Auth ---------------- */
-function httpGetJSON(fullUrl) {
+function httpGetJSON(fullUrl, timeoutMs) {
   return new Promise((resolve, reject) => {
     let u;
     try {
@@ -66,7 +66,7 @@ function httpGetJSON(fullUrl) {
         Authorization: "Basic " + auth,
         Accept: "application/json",
       },
-      timeout: 30000,
+      timeout: timeoutMs || 30000,
     };
     const req = https.request(options, (res) => {
       const chunks = [];
@@ -130,7 +130,7 @@ async function fetchEntitySet(entityName, opts) {
     const full = baseUrl() + entityName + "?" + buildQuery(params);
     let json;
     try {
-      json = await httpGetJSON(full);
+      json = await httpGetJSON(full, opts.timeoutMs);
     } catch (e) {
       throw new Error("[" + entityName + (opts.expand ? " $expand=" + opts.expand : "") + "] " + e.message);
     }
@@ -147,29 +147,37 @@ async function fetchEntitySet(entityName, opts) {
    (например, эти поля тоже окажутся "составными"), просто берём счета без них:
    план производства всё равно посчитается, только разбивка по категориям пострадает. */
 async function fetchInvoices(filter) {
+  // Свежая находка: предыдущий отказ от $expand был не из-за несовместимости
+  // полей, а из-за "таймаут запроса" — на ~2670 счетах с pageSize 300 сервер 1С
+  // не успевает ответить за 30 секунд, когда нужно ещё и подгружать связанные
+  // справочники (Ответственный/Контрагент) для каждой строки. Решение: берём
+  // страницы поменьше (меньше работы за один запрос) и даём больше времени на
+  // ответ — это не меняет сами данные, только скорость/таймаут запроса.
+  const expandOpts = { filter, pageSize: 100, timeoutMs: 60000 };
   // Сначала пробуем расширить оба поля сразу — самый быстрый путь.
   try {
     const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
-      filter,
+      ...expandOpts,
       expand: "Ответственный,Контрагент",
     });
     return { rows, expandUsed: "Ответственный,Контрагент", expandError: null };
   } catch (eBoth) {
     if (!/expand/i.test(eBoth.message)) throw eBoth;
     // Не получилось расширить оба сразу — возможно, дело в одном из двух полей
-    // (например, у него на этом сервере составной/нестандартный тип ссылки).
-    // "Ответственный" нам важнее (от него зависит категория "Гос закуп" в
-    // engine.js), поэтому пробуем его отдельно, прежде чем сдаваться полностью.
+    // (например, у него на этом сервере составной/нестандартный тип ссылки,
+    // либо снова таймаут уже на одном поле). "Ответственный" нам важнее (от
+    // него зависит категория "Гос закуп" в engine.js), поэтому пробуем его
+    // отдельно, прежде чем сдаваться полностью.
     try {
       const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
-        filter,
+        ...expandOpts,
         expand: "Ответственный",
       });
       return { rows, expandUsed: "Ответственный", expandError: eBoth.message };
     } catch (eResp) {
       try {
         const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
-          filter,
+          ...expandOpts,
           expand: "Контрагент",
         });
         return { rows, expandUsed: "Контрагент", expandError: eBoth.message };
@@ -235,6 +243,21 @@ async function fetchCharacteristics() {
     return { rows, error: null };
   } catch (e) {
     return { rows: [], error: e.message };
+  }
+}
+
+/* Прямой запрос одной записи справочника по её GUID — самый надёжный способ
+   проверить, существует ли запись вообще и под каким именно набором сущностей
+   она видна. Используем как диагностику для "необъяснимых" GUID товаров, у
+   которых не сработали ни $expand, ни поиск по справочнику Catalog_Номенклатура. */
+async function fetchSingleEntity(entityName, key) {
+  if (!key) return { found: false, error: "пустой ключ" };
+  const url = baseUrl() + entityName + "(guid'" + key + "')?" + buildQuery({ "$format": "json" });
+  try {
+    const json = await httpGetJSON(url, 15000);
+    return { found: true, data: json, error: null };
+  } catch (e) {
+    return { found: false, data: null, error: e.message };
   }
 }
 
@@ -412,6 +435,21 @@ async function refresh() {
 
   const unknownItemsCount = itemsRaw.filter((it) => /^Неизвестная позиция/.test(it.product)).length;
 
+  // Точечная диагностика: пробуем прямым запросом по GUID найти ровно тот
+  // товар, который не нашёлся ни через $expand, ни через справочник —
+  // ответ сервера (найден/не найден/ошибка) даёт точный ответ, а не догадку.
+  let directLookup = null;
+  if (diag.unresolvedSample && diag.unresolvedSample.Номенклатура_Key) {
+    const key = diag.unresolvedSample.Номенклатура_Key;
+    const res = await fetchSingleEntity("Catalog_Номенклатура", key);
+    directLookup = {
+      key,
+      found: res.found,
+      error: res.error ? String(res.error).slice(0, 300) : null,
+      data: res.data ? JSON.stringify(res.data).slice(0, 300) : null,
+    };
+  }
+
   const meta = {
     source: "1c",
     lastSyncAt: new Date().toISOString(),
@@ -440,6 +478,7 @@ async function refresh() {
       charCount: charRows.length,
       charFetchError: charFetchError ? String(charFetchError).slice(0, 300) : null,
       unresolvedSampleJson: diag.unresolvedSample ? JSON.stringify(diag.unresolvedSample).slice(0, 400) : null,
+      directLookup,
     },
   };
 
