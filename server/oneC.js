@@ -171,12 +171,11 @@ async function fetchInvoiceDetail(refKey) {
     baseUrl() +
     "Document_СчетНаОплатуПокупателю(guid'" + refKey + "')?" +
     buildQuery({ "$format": "json", "$expand": "Ответственный,Контрагент" });
-  try {
-    const json = await httpGetJSON(url, 15000);
-    return { ok: true, data: json };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
+  // Не глушим ошибку здесь сами (как раньше) — пусть бросает исключение, как
+  // fetchTovaryForInvoice. Так mapWithConcurrency сам оборачивает результат в
+  // {ok, value}/{ok:false, error}, и ниже в refresh() используется тот же
+  // привычный шаблон, что и для товаров — без путаницы с двойной обёрткой.
+  return httpGetJSON(url, 15000);
 }
 
 /* Товарные позиции одного счёта — табличная часть документа недоступна через
@@ -392,11 +391,12 @@ async function refresh() {
   activeInvoices.forEach((inv, i) => {
     const res = detailResults[i];
     if (res.ok) {
-      if (res.data.Ответственный) inv.Ответственный = res.data.Ответственный;
-      if (res.data.Контрагент) inv.Контрагент = res.data.Контрагент;
+      const data = res.value;
+      if (data.Ответственный) inv.Ответственный = data.Ответственный;
+      if (data.Контрагент) inv.Контрагент = data.Контрагент;
     } else {
       detailFailCount++;
-      if (!firstDetailError) firstDetailError = res.error;
+      if (!firstDetailError) firstDetailError = res.error.message;
     }
   });
   const expandUsed = detailFailCount < activeInvoices.length ? "поштучно по активным счетам" : null;
