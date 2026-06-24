@@ -390,7 +390,7 @@
     var cls = "order" + (o.fire ? " fire" : "");
     var html = '<div class="' + cls + '">';
     html += '<div class="r1"><div><span class="onum">№' + E.esc(o.number) + '</span><span class="odate">' + E.fmtDate(o.date) + '</span></div>' +
-      '<div class="osum">' + E.fmtMoney(o.sum) + 'Т</div></div>';
+      '<div class="osum">' + E.fmtMoney(o.sum) + '₸</div></div>';
     if (items.length) {
       html += '<div class="items">';
       items.slice(0, 4).forEach(function (it) {
