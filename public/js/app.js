@@ -75,9 +75,11 @@
     if (stamp) {
       if (meta.lastSyncAt) {
         var dbg = meta.debug;
-        var dbgTxt = dbg ? (" · получено счетов: " + dbg.totalFetched + ", удалено: " + dbg.skippedDeleted + ", отгружено: " + dbg.skippedShipped + ", без номера: " + dbg.skippedNoNumber + ", реализаций: " + dbg.realizCount + ", в справочнике товаров: " + dbg.nomCount + ", не распознано позиций: " + dbg.unknownItemsCount +
+        var dbgTxt = dbg ? (" · получено счетов: " + dbg.totalFetched + ", удалено: " + dbg.skippedDeleted + ", отгружено: " + dbg.skippedShipped + ", без номера: " + dbg.skippedNoNumber + ", реализаций: " + dbg.realizCount + ", в справочнике товаров: " + dbg.nomCount + ", в характеристиках: " + (dbg.charCount != null ? dbg.charCount : "—") + ", не распознано позиций: " + dbg.unknownItemsCount +
           " · счёт.expand: " + (dbg.expandUsed || "нет") + ", тов.expand: " + (dbg.tovaryExpand || "нет") +
           ", без ответственного: " + dbg.respEmptyCount + (dbg.respSample ? " (пример: " + dbg.respSample + ")" : "") +
+          (dbg.invoiceExpandError ? (" · ошибка expand счетов: " + dbg.invoiceExpandError) : "") +
+          (dbg.charFetchError ? (" · ошибка справочника характеристик: " + dbg.charFetchError) : "") +
           (dbg.unresolvedSampleJson ? (" · пример нераспознанной строки товара: " + dbg.unresolvedSampleJson) : "")) : "";
         stamp.textContent = (meta.lastSyncOk === false ? "Ошибка: " + (meta.lastSyncError || "") + " · посл. попытка " : "Обновлено: ") + fmtDateTime(meta.lastSyncAt) + dbgTxt;
       } else {
