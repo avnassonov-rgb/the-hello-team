@@ -115,7 +115,14 @@ function buildQuery(params) {
     .join("&");
 }
 
-/* Постранично выгружает весь набор сущностей (1С может ограничивать страницу). */
+/* Постранично выгружает весь набор сущностей (1С может ограничивать страницу).
+   ВАЖНО: без явного $orderby сервер 1С не гарантирует одинаковый порядок строк
+   между соседними страницами ($top/$skip) — порядок может быть нестабильным,
+   и часть записей "проваливается" между страницами, не попадая ни в одну из
+   них. Это объясняет, почему конкретные товары отсутствовали в выгруженном
+   справочнике, хотя точно существуют (подтверждено прямым запросом по GUID).
+   Сортируем по Ref_Key — он у каждой записи уникален и не меняется, поэтому
+   порядок страниц становится стабильным и предсказуемым. */
 async function fetchEntitySet(entityName, opts) {
   opts = opts || {};
   const pageSize = opts.pageSize || 300;
@@ -123,7 +130,7 @@ async function fetchEntitySet(entityName, opts) {
   let all = [];
   let skip = 0;
   for (let page = 0; page < guardMaxPages; page++) {
-    const params = { "$format": "json", "$top": pageSize, "$skip": skip };
+    const params = { "$format": "json", "$top": pageSize, "$skip": skip, "$orderby": opts.orderby || "Ref_Key" };
     if (opts.filter) params["$filter"] = opts.filter;
     if (opts.expand) params["$expand"] = opts.expand;
     if (opts.select) params["$select"] = opts.select;
@@ -142,50 +149,33 @@ async function fetchEntitySet(entityName, opts) {
   return all;
 }
 
-/* Список счетов: пробуем получить с расшифровкой Ответственного/Контрагента (для
-   категоризации "Госзакуп" и т.п.), но это не критично — если сервер откажет и тут
-   (например, эти поля тоже окажутся "составными"), просто берём счета без них:
-   план производства всё равно посчитается, только разбивка по категориям пострадает. */
+/* Список счетов — БЕЗ расшифровки Ответственного/Контрагента в массовом запросе.
+   Раньше пробовали $expand=Ответственный,Контрагент сразу на всех ~2670 счетах —
+   даже с уменьшенными страницами (100) и увеличенным таймаутом (60 сек) сервер
+   1С не успевал ответить ("таймаут запроса"). Расшифровка нужна только для
+   активных (не отгруженных/не удалённых) счетов — их обычно на порядок меньше
+   (~100-150), поэтому теперь делаем её точечно, по одному счёту, уже после
+   отсева — см. fetchInvoiceDetail() и его использование в refresh(). */
 async function fetchInvoices(filter) {
-  // Свежая находка: предыдущий отказ от $expand был не из-за несовместимости
-  // полей, а из-за "таймаут запроса" — на ~2670 счетах с pageSize 300 сервер 1С
-  // не успевает ответить за 30 секунд, когда нужно ещё и подгружать связанные
-  // справочники (Ответственный/Контрагент) для каждой строки. Решение: берём
-  // страницы поменьше (меньше работы за один запрос) и даём больше времени на
-  // ответ — это не меняет сами данные, только скорость/таймаут запроса.
-  const expandOpts = { filter, pageSize: 100, timeoutMs: 60000 };
-  // Сначала пробуем расширить оба поля сразу — самый быстрый путь.
+  const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", { filter, pageSize: 300 });
+  return { rows };
+}
+
+/* Точечная расшифровка Ответственного/Контрагента ровно для одного счёта —
+   вызывается только для активных счетов (их немного), поэтому не упирается в
+   таймаут, который ловит массовый $expand сразу на всех счетах (см. комментарий
+   в fetchInvoices выше). Тот же приём, что уже работает для товаров счёта
+   (fetchTovaryForInvoice) — обращение к конкретной записи по GUID, а не пачкой. */
+async function fetchInvoiceDetail(refKey) {
+  const url =
+    baseUrl() +
+    "Document_СчетНаОплатуПокупателю(guid'" + refKey + "')?" +
+    buildQuery({ "$format": "json", "$expand": "Ответственный,Контрагент" });
   try {
-    const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
-      ...expandOpts,
-      expand: "Ответственный,Контрагент",
-    });
-    return { rows, expandUsed: "Ответственный,Контрагент", expandError: null };
-  } catch (eBoth) {
-    if (!/expand/i.test(eBoth.message)) throw eBoth;
-    // Не получилось расширить оба сразу — возможно, дело в одном из двух полей
-    // (например, у него на этом сервере составной/нестандартный тип ссылки,
-    // либо снова таймаут уже на одном поле). "Ответственный" нам важнее (от
-    // него зависит категория "Гос закуп" в engine.js), поэтому пробуем его
-    // отдельно, прежде чем сдаваться полностью.
-    try {
-      const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
-        ...expandOpts,
-        expand: "Ответственный",
-      });
-      return { rows, expandUsed: "Ответственный", expandError: eBoth.message };
-    } catch (eResp) {
-      try {
-        const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
-          ...expandOpts,
-          expand: "Контрагент",
-        });
-        return { rows, expandUsed: "Контрагент", expandError: eBoth.message };
-      } catch (eContr) {
-        const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", { filter });
-        return { rows, expandUsed: null, expandError: eBoth.message };
-      }
-    }
+    const json = await httpGetJSON(url, 15000);
+    return { ok: true, data: json };
+  } catch (e) {
+    return { ok: false, error: e.message };
   }
 }
 
@@ -344,8 +334,8 @@ async function refresh() {
   const ordersFilter = "Date ge " + dateFrom;
   const realizFilter = "Date ge " + dateFrom;
 
-  const { rows: invoicesAll, expandUsed, expandError } = await fetchInvoices(ordersFilter);
-  console.log("[1C] счета получены, $expand=" + (expandUsed || "(без expand)") + ", строк: " + invoicesAll.length);
+  const { rows: invoicesAll } = await fetchInvoices(ordersFilter);
+  console.log("[1C] счета получены, строк: " + invoicesAll.length);
 
   const realizations = await fetchEntitySet("Document_РеализацияТоваровУслуг", {
     filter: realizFilter,
@@ -389,6 +379,30 @@ async function refresh() {
     if (!String(inv.Number || "").trim()) { skippedNoNumber++; return false; }
     return true;
   });
+
+  // Расшифровка Ответственного/Контрагента — точечно, только для активных счетов
+  // (см. комментарий в fetchInvoices выше про таймаут на массовом $expand).
+  // Без неё engine.js не сможет определить категорию "Гос закуп" (она зависит
+  // от поля "Ответственный").
+  const detailResults = await mapWithConcurrency(activeInvoices, 4, (inv) =>
+    fetchInvoiceDetail(inv.Ref_Key)
+  );
+  let detailFailCount = 0;
+  let firstDetailError = null;
+  activeInvoices.forEach((inv, i) => {
+    const res = detailResults[i];
+    if (res.ok) {
+      if (res.data.Ответственный) inv.Ответственный = res.data.Ответственный;
+      if (res.data.Контрагент) inv.Контрагент = res.data.Контрагент;
+    } else {
+      detailFailCount++;
+      if (!firstDetailError) firstDetailError = res.error;
+    }
+  });
+  const expandUsed = detailFailCount < activeInvoices.length ? "поштучно по активным счетам" : null;
+  const expandError = detailFailCount > 0
+    ? (detailFailCount + " из " + activeInvoices.length + " счетов не удалось: " + firstDetailError)
+    : null;
 
   const tovaryExpand = await detectTovaryExpand(activeInvoices[0] && activeInvoices[0].Ref_Key);
 
@@ -446,7 +460,7 @@ async function refresh() {
       key,
       found: res.found,
       error: res.error ? String(res.error).slice(0, 300) : null,
-      data: res.data ? JSON.stringify(res.data).slice(0, 300) : null,
+      data: res.data ? JSON.stringify(res.data).slice(0, 600) : null,
     };
   }
 
