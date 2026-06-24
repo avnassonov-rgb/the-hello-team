@@ -153,29 +153,49 @@ async function fetchEntitySet(entityName, opts) {
    Раньше пробовали $expand=Ответственный,Контрагент сразу на всех ~2670 счетах —
    даже с уменьшенными страницами (100) и увеличенным таймаутом (60 сек) сервер
    1С не успевал ответить ("таймаут запроса"). Расшифровка нужна только для
-   активных (не отгруженных/не удалённых) счетов — их обычно на порядок меньше
-   (~100-150), поэтому теперь делаем её точечно, по одному счёту, уже после
-   отсева — см. fetchInvoiceDetail() и его использование в refresh(). */
+   активных (не отгруженных/не удалённых) счетов, и делается она теперь без
+   $expand вообще — см. fetchRefCatalogMap() и его использование в refresh(). */
 async function fetchInvoices(filter) {
   const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", { filter, pageSize: 300 });
   return { rows };
 }
 
-/* Точечная расшифровка Ответственного/Контрагента ровно для одного счёта —
-   вызывается только для активных счетов (их немного), поэтому не упирается в
-   таймаут, который ловит массовый $expand сразу на всех счетах (см. комментарий
-   в fetchInvoices выше). Тот же приём, что уже работает для товаров счёта
-   (fetchTovaryForInvoice) — обращение к конкретной записи по GUID, а не пачкой. */
-async function fetchInvoiceDetail(refKey) {
-  const url =
-    baseUrl() +
-    "Document_СчетНаОплатуПокупателю(guid'" + refKey + "')?" +
-    buildQuery({ "$format": "json", "$expand": "Ответственный,Контрагент" });
-  // Не глушим ошибку здесь сами (как раньше) — пусть бросает исключение, как
-  // fetchTovaryForInvoice. Так mapWithConcurrency сам оборачивает результат в
-  // {ok, value}/{ok:false, error}, и ниже в refresh() используется тот же
-  // привычный шаблон, что и для товаров — без путаницы с двойной обёрткой.
-  return httpGetJSON(url, 15000);
+/* Расшифровка Ответственного/Контрагента БЕЗ $expand.
+   Этот сервер 1С отвечает "HTTP 501: Опция $expand не поддерживается при
+   запросе одиночных сущностей" даже при запросе ОДНОГО счёта по GUID — то есть
+   $expand тут не работает вообще никак (ни массово, ни по одному), это не
+   таймаут и не временный сбой, а особенность конкретной публикации OData.
+   Поэтому расшифровку делаем иначе, тем же надёжным способом, который уже
+   работает для товаров (см. nomMap ниже): 1С всегда отдаёт рядом со ссылочным
+   полем его обычный GUID с суффиксом "_Key" (Ответственный_Key, Контрагент_Key)
+   — даже без $expand. Достаточно один раз выгрузить справочник целиком
+   (Catalog_Пользователи / Catalog_Контрагенты) и сопоставить по этому GUID —
+   без единого дополнительного запроса на каждый счёт, без риска таймаута. */
+async function fetchRefCatalogMap(candidateEntityNames, selectFields) {
+  let lastError = null;
+  for (const entityName of candidateEntityNames) {
+    try {
+      const rows = await fetchEntitySet(entityName, {
+        select: selectFields || "Ref_Key,Description",
+        pageSize: 1000,
+      });
+      const map = new Map();
+      rows.forEach((r) => {
+        if (r.Ref_Key) map.set(String(r.Ref_Key).toLowerCase(), r.Description || r.Code || "");
+      });
+      return { map, usedEntity: entityName, rowCount: rows.length, error: null };
+    } catch (e) {
+      lastError = "[" + entityName + "] " + e.message;
+    }
+  }
+  return {
+    map: new Map(),
+    usedEntity: null,
+    rowCount: 0,
+    error: candidateEntityNames.length > 1
+      ? "ни один справочник не сработал (" + candidateEntityNames.join(", ") + "): " + lastError
+      : lastError,
+  };
 }
 
 /* Товарные позиции одного счёта — табличная часть документа недоступна через
@@ -183,9 +203,9 @@ async function fetchInvoiceDetail(refKey) {
    адресу вида Document_СчетНаОплатуПокупателю(guid'...')/Товары — это стандартный
    способ OData для доступа к коллекции конкретного документа.
    Поле "Номенклатура" внутри каждой строки товара — это уже одиночная ссылка
-   (не коллекция), поэтому для неё $expand работает (мы это проверили раньше на
-   полях Ответственный/Контрагент счёта) — запрашиваем её сразу, чтобы получить
-   название товара без отдельного похода в справочник Catalog_Номенклатура. */
+   (не коллекция), поэтому для неё $expand работает — запрашиваем её сразу,
+   чтобы получить название товара без отдельного похода в справочник
+   Catalog_Номенклатура. */
 async function fetchTovaryForInvoice(refKey, expand) {
   const params = { "$format": "json" };
   if (expand) params["$expand"] = expand;
@@ -273,12 +293,21 @@ async function mapWithConcurrency(items, limit, fn) {
 }
 
 /* ---------------- преобразование счёта в order + items (формат engine.js) ---------------- */
-function buildOrderAndItems(inv, tovaryRows, nomMap, charMap, diag) {
+function buildOrderAndItems(inv, tovaryRows, nomMap, charMap, respMap, contrMap, diag) {
   const number = String(inv.Number || "").trim();
   const date = inv.Date ? new Date(inv.Date) : null;
   const sum = parseFloat(inv.СуммаДокумента) || 0;
-  const resp = (inv.Ответственный && (inv.Ответственный.Description || inv.Ответственный.Code)) || "";
-  const contr = (inv.Контрагент && (inv.Контрагент.Description || inv.Контрагент.Code)) || "";
+  // Сначала смотрим на расширенный объект (на случай если когда-нибудь $expand
+  // заработает), а если его нет — берём имя из справочника по "_Key"-полю,
+  // которое 1С отдаёт всегда, независимо от $expand (см. fetchRefCatalogMap).
+  const resp =
+    (inv.Ответственный && (inv.Ответственный.Description || inv.Ответственный.Code)) ||
+    (inv.Ответственный_Key ? respMap.get(String(inv.Ответственный_Key).toLowerCase()) : "") ||
+    "";
+  const contr =
+    (inv.Контрагент && (inv.Контрагент.Description || inv.Контрагент.Code)) ||
+    (inv.Контрагент_Key ? contrMap.get(String(inv.Контрагент_Key).toLowerCase()) : "") ||
+    "";
   const com = inv.Комментарий || "";
 
   const order = {
@@ -379,30 +408,18 @@ async function refresh() {
     return true;
   });
 
-  // Расшифровка Ответственного/Контрагента — точечно, только для активных счетов
-  // (см. комментарий в fetchInvoices выше про таймаут на массовом $expand).
-  // Без неё engine.js не сможет определить категорию "Гос закуп" (она зависит
-  // от поля "Ответственный").
-  const detailResults = await mapWithConcurrency(activeInvoices, 4, (inv) =>
-    fetchInvoiceDetail(inv.Ref_Key)
-  );
-  let detailFailCount = 0;
-  let firstDetailError = null;
-  activeInvoices.forEach((inv, i) => {
-    const res = detailResults[i];
-    if (res.ok) {
-      const data = res.value;
-      if (data.Ответственный) inv.Ответственный = data.Ответственный;
-      if (data.Контрагент) inv.Контрагент = data.Контрагент;
-    } else {
-      detailFailCount++;
-      if (!firstDetailError) firstDetailError = res.error.message;
-    }
-  });
-  const expandUsed = detailFailCount < activeInvoices.length ? "поштучно по активным счетам" : null;
-  const expandError = detailFailCount > 0
-    ? (detailFailCount + " из " + activeInvoices.length + " счетов не удалось: " + firstDetailError)
-    : null;
+  // Расшифровка Ответственного/Контрагента — через справочники, без $expand
+  // (см. комментарий в fetchRefCatalogMap выше: $expand на этом сервере не
+  // работает даже по одному счёту). Без неё engine.js не сможет определить
+  // категорию "Гос закуп" (она зависит от поля "Ответственный").
+  // "Пользователи" — стандартный системный справочник почти в любой конфигурации
+  // 1С, поэтому он первый кандидат; "ФизическиеЛица"/"Сотрудники" — запасные
+  // варианты на случай, если "Ответственный" в этой конфигурации ссылается на
+  // другой тип справочника.
+  const respCatalog = await fetchRefCatalogMap(["Catalog_Пользователи", "Catalog_ФизическиеЛица", "Catalog_Сотрудники"]);
+  // "Контрагенты" — стандартный справочник для покупателей/поставщиков, должен
+  // быть в любой конфигурации 1С:Бухгалтерия.
+  const contrCatalog = await fetchRefCatalogMap(["Catalog_Контрагенты"]);
 
   const tovaryExpand = await detectTovaryExpand(activeInvoices[0] && activeInvoices[0].Ref_Key);
 
@@ -425,17 +442,17 @@ async function refresh() {
       tovaryFailCount++;
       if (!firstTovaryError) firstTovaryError = res.error.message;
     }
-    const built = buildOrderAndItems(inv, rows, nomMap, charMap, diag);
+    const built = buildOrderAndItems(inv, rows, nomMap, charMap, respCatalog.map, contrCatalog.map, diag);
     ordersRaw.push(built.order);
     itemsRaw = itemsRaw.concat(built.items);
   });
 
   // Диагностика категоризации "Гос закуп": engine.js относит заказ к "гос" только
   // если в поле "Ответственный" встречается ключевое слово — если расшифровка
-  // Ответственного не пришла (см. expandUsed выше), это поле у всех заказов будет
-  // пустым, и ВСЕ заказы провалятся в "Прочие заказы" независимо от реального
-  // распределения. Считаем, у скольких заказов оно пустое, и берём пару примеров
-  // непустых значений — видно по одному скриншоту, есть ли тут проблема.
+  // Ответственного не пришла, это поле у всех заказов будет пустым, и ВСЕ заказы
+  // провалятся в "Прочие заказы" независимо от реального распределения. Считаем,
+  // у скольких заказов оно пустое, и берём пару примеров непустых значений —
+  // видно по одному скриншоту, есть ли тут проблема.
   const respEmptyCount = ordersRaw.filter((o) => !o.resp).length;
   const respSample = ordersRaw.filter((o) => o.resp).slice(0, 2).map((o) => o.resp).join(" | ");
 
@@ -472,7 +489,7 @@ async function refresh() {
     ordersCount: ordersRaw.length,
     itemsCount: itemsRaw.length,
     skippedShipped,
-    expandUsed,
+    expandUsed: respCatalog.usedEntity,
     // диагностика — чтобы по одному скриншоту понять, на каком шаге пропали заказы
     // или не распознались наименования товаров
     debug: {
@@ -488,7 +505,12 @@ async function refresh() {
       tovaryExpand,
       respEmptyCount,
       respSample,
-      invoiceExpandError: expandError ? String(expandError).slice(0, 300) : null,
+      respCatalogUsed: respCatalog.usedEntity,
+      respCatalogSize: respCatalog.rowCount,
+      respCatalogError: respCatalog.error ? String(respCatalog.error).slice(0, 300) : null,
+      contrCatalogUsed: contrCatalog.usedEntity,
+      contrCatalogSize: contrCatalog.rowCount,
+      contrCatalogError: contrCatalog.error ? String(contrCatalog.error).slice(0, 300) : null,
       charCount: charRows.length,
       charFetchError: charFetchError ? String(charFetchError).slice(0, 300) : null,
       unresolvedSampleJson: diag.unresolvedSample ? JSON.stringify(diag.unresolvedSample).slice(0, 400) : null,
