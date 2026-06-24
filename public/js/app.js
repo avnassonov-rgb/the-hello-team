@@ -50,86 +50,82 @@
     });
   }
 
-  /* ---------------- загрузка файлов ---------------- */
-  function readWorkbookRows(file, cb) {
-    var reader = new FileReader();
-    reader.onload = function (e) {
-      try {
-        var data = new Uint8Array(e.target.result);
-        var wb = XLSX.read(data, { type: "array", cellDates: true });
-        var ws = wb.Sheets[wb.SheetNames[0]];
-        var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" });
-        cb(null, rows);
-      } catch (err) {
-        cb(err);
-      }
-    };
-    reader.onerror = function () { cb(new Error("не удалось прочитать файл")); };
-    reader.readAsArrayBuffer(file);
-  }
-
-  function uploadPatch(patch, cb) {
-    fetch("/api/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (j) { cb(null, j); })
-      .catch(cb);
-  }
-
-  function initUploads() {
-    document.getElementById("fileOrders").addEventListener("change", function (e) {
-      var file = e.target.files[0];
-      if (!file) return;
-      readWorkbookRows(file, function (err, rows) {
-        if (err) { alert("Ошибка чтения файла «" + file.name + "»: " + err.message); return; }
-        var parsed = E.parseOrders(rows);
-        if (!parsed.out.length) {
-          alert("В файле «" + file.name + "» не найдено ни одной строки заказов. Проверьте, что это правильный файл («не отгруженные»).");
-        }
-        var ordersRaw = parsed.out.map(function (o) {
-          return Object.assign({}, o, { date: o.date instanceof Date ? o.date.toISOString() : o.date });
-        });
-        uploadPatch({ ordersRaw: ordersRaw, ordersFileName: file.name, itemsFileName: serverState && serverState.meta ? serverState.meta.itemsFileName : null }, function (err2, res) {
-          if (err2 || !res || !res.ok) { alert("Не удалось сохранить файл на сервере."); return; }
-          serverState.ordersRaw = ordersRaw;
-          serverState.meta = res.meta;
-          afterDataChange();
-        });
-      });
-    });
-
-    document.getElementById("fileItems").addEventListener("change", function (e) {
-      var file = e.target.files[0];
-      if (!file) return;
-      readWorkbookRows(file, function (err, rows) {
-        if (err) { alert("Ошибка чтения файла «" + file.name + "»: " + err.message); return; }
-        var parsed = E.parseItems(rows);
-        if (!parsed.out.length) {
-          alert("В файле «" + file.name + "» не найдено ни одной позиции. Проверьте, что это правильный файл («универсальный отчёт»).");
-        }
-        uploadPatch({ itemsRaw: parsed.out, itemsFileName: file.name, ordersFileName: serverState && serverState.meta ? serverState.meta.ordersFileName : null }, function (err2, res) {
-          if (err2 || !res || !res.ok) { alert("Не удалось сохранить файл на сервере."); return; }
-          serverState.itemsRaw = parsed.out;
-          serverState.meta = res.meta;
-          afterDataChange();
-        });
-      });
-    });
-  }
+  /* ---------------- синхронизация с 1С ---------------- */
+  var syncing = false;
+  var lastSeenSyncAt = null;
 
   function renderFilePills() {
     var meta = (serverState && serverState.meta) || {};
-    var nmO = document.getElementById("nmOrders");
-    var nmI = document.getElementById("nmItems");
-    if (meta.ordersFileName) { nmO.textContent = meta.ordersFileName; nmO.classList.remove("empty"); }
-    else { nmO.textContent = "не загружен"; nmO.classList.add("empty"); }
-    if (meta.itemsFileName) { nmI.textContent = meta.itemsFileName; nmI.classList.remove("empty"); }
-    else { nmI.textContent = "не загружен"; nmI.classList.add("empty"); }
+    var nm = document.getElementById("nmSync");
     var stamp = document.getElementById("stampLine");
-    stamp.textContent = meta.uploadedAt ? "Обновлено: " + fmtDateTime(meta.uploadedAt) : "";
+    if (!nm) return;
+    if (syncing) {
+      nm.textContent = "обновление...";
+      nm.classList.add("empty");
+    } else if (meta.lastSyncOk === false) {
+      nm.textContent = "ошибка синка";
+      nm.classList.add("empty");
+    } else if (meta.lastSyncAt) {
+      nm.textContent = "ордеров " + (meta.ordersCount != null ? meta.ordersCount : "—");
+      nm.classList.remove("empty");
+    } else {
+      nm.textContent = "ожидание первого синка";
+      nm.classList.add("empty");
+    }
+    if (stamp) {
+      if (meta.lastSyncAt) {
+        stamp.textContent = (meta.lastSyncOk === false ? "Ошибка: " + (meta.lastSyncError || "") + " · посл. попытка " : "Обновлено: ") + fmtDateTime(meta.lastSyncAt);
+      } else {
+        stamp.textContent = "";
+      }
+    }
+  }
+
+  function applyState(st) {
+    serverState = st;
+    afterDataChange();
+  }
+
+  function initSync() {
+    var btn = document.getElementById("syncRefreshBtn");
+    if (btn) {
+      btn.addEventListener("click", function () {
+        if (syncing) return;
+        syncing = true;
+        renderFilePills();
+        fetch("/api/onec/refresh", { method: "POST" })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            syncing = false;
+            if (j && j.state) applyState(j.state);
+            else renderFilePills();
+            if (j && j.ok === false) {
+              alert("Не удалось обновить данные из 1С: " + (j.error || "неизвестная ошибка"));
+            }
+          })
+          .catch(function () {
+            syncing = false;
+            renderFilePills();
+            alert("Ошибка соединения с сервером.");
+          });
+      });
+    }
+
+    // Лёгкий опрос состояния — подхватывает данные, которые сервер обновил сам
+    // по таймеру (каждые 5 минут), без участия пользователя.
+    setInterval(function () {
+      if (syncing) return;
+      fetch("/api/state")
+        .then(function (r) { return r.json(); })
+        .then(function (st) {
+          var newAt = st && st.meta && st.meta.lastSyncAt;
+          if (newAt && newAt !== lastSeenSyncAt) {
+            lastSeenSyncAt = newAt;
+            applyState(st);
+          }
+        })
+        .catch(function () {});
+    }, 60 * 1000);
   }
 
   /* ---------------- настройки ---------------- */
@@ -572,7 +568,7 @@
   function init() {
     initTabs();
     initLogout();
-    initUploads();
+    initSync();
     initControlButtons();
     initPrintButtons();
     initManagersTab();
@@ -583,6 +579,7 @@
         serverState = st;
         settings = Object.assign({}, E.DEFAULT_SETTINGS, st.settings || {});
         control = (st.control && st.control.length) ? st.control : E.DEFAULT_CONTROL.map(function (c) { return Object.assign({}, c); });
+        lastSeenSyncAt = st && st.meta && st.meta.lastSyncAt || null;
         renderFilePills();
         renderSettingsForm();
         renderControlEditor();
