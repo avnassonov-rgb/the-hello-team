@@ -147,16 +147,37 @@ async function fetchEntitySet(entityName, opts) {
    (например, эти поля тоже окажутся "составными"), просто берём счета без них:
    план производства всё равно посчитается, только разбивка по категориям пострадает. */
 async function fetchInvoices(filter) {
+  // Сначала пробуем расширить оба поля сразу — самый быстрый путь.
   try {
     const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
       filter,
       expand: "Ответственный,Контрагент",
     });
-    return { rows, expandUsed: "Ответственный,Контрагент" };
-  } catch (e) {
-    if (!/expand/i.test(e.message)) throw e;
-    const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", { filter });
-    return { rows, expandUsed: null };
+    return { rows, expandUsed: "Ответственный,Контрагент", expandError: null };
+  } catch (eBoth) {
+    if (!/expand/i.test(eBoth.message)) throw eBoth;
+    // Не получилось расширить оба сразу — возможно, дело в одном из двух полей
+    // (например, у него на этом сервере составной/нестандартный тип ссылки).
+    // "Ответственный" нам важнее (от него зависит категория "Гос закуп" в
+    // engine.js), поэтому пробуем его отдельно, прежде чем сдаваться полностью.
+    try {
+      const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
+        filter,
+        expand: "Ответственный",
+      });
+      return { rows, expandUsed: "Ответственный", expandError: eBoth.message };
+    } catch (eResp) {
+      try {
+        const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", {
+          filter,
+          expand: "Контрагент",
+        });
+        return { rows, expandUsed: "Контрагент", expandError: eBoth.message };
+      } catch (eContr) {
+        const rows = await fetchEntitySet("Document_СчетНаОплатуПокупателю", { filter });
+        return { rows, expandUsed: null, expandError: eBoth.message };
+      }
+    }
   }
 }
 
@@ -197,6 +218,26 @@ async function detectTovaryExpand(sampleRefKey) {
   }
 }
 
+/* Справочник "Характеристики номенклатуры" — отдельный каталог для вариантов
+   товара (вкус/объём и т.п.), стандартный для конфигураций 1С с включёнными
+   характеристиками. Строка товара в счёте может ссылаться именно на
+   характеристику, а не на сам товар — тогда ни Catalog_Номенклатура, ни
+   $expand=Номенклатура для такой строки ничего не находят (это ссылка на
+   другой тип объекта). Пробуем получить этот справочник отдельно; если его на
+   этом сервере нет/он называется иначе — просто продолжаем без него, это
+   запасной путь, а не обязательный шаг. */
+async function fetchCharacteristics() {
+  try {
+    const rows = await fetchEntitySet("Catalog_ХарактеристикиНоменклатуры", {
+      select: "Ref_Key,Description,Владелец_Key",
+      pageSize: 500,
+    });
+    return { rows, error: null };
+  } catch (e) {
+    return { rows: [], error: e.message };
+  }
+}
+
 /* Параллельная обработка с ограничением одновременных запросов — чтобы не
    перегружать сервер 1С при большом числе счетов. */
 async function mapWithConcurrency(items, limit, fn) {
@@ -220,7 +261,7 @@ async function mapWithConcurrency(items, limit, fn) {
 }
 
 /* ---------------- преобразование счёта в order + items (формат engine.js) ---------------- */
-function buildOrderAndItems(inv, tovaryRows, nomMap, diag) {
+function buildOrderAndItems(inv, tovaryRows, nomMap, charMap, diag) {
   const number = String(inv.Number || "").trim();
   const date = inv.Date ? new Date(inv.Date) : null;
   const sum = parseFloat(inv.СуммаДокумента) || 0;
@@ -247,6 +288,9 @@ function buildOrderAndItems(inv, tovaryRows, nomMap, diag) {
     // Сравниваем GUID без учёта регистра букв — 1С не всегда отдаёт их в одном
     // и том же регистре в разных наборах данных (справочник vs табличная часть).
     if (!name && row.Номенклатура_Key) name = nomMap.get(String(row.Номенклатура_Key).toLowerCase()) || "";
+    // Запасной путь: строка может ссылаться на характеристику (вариант товара),
+    // а не на сам товар — пробуем найти имя там (см. fetchCharacteristics выше).
+    if (!name && row.Номенклатура_Key) name = charMap.get(String(row.Номенклатура_Key).toLowerCase()) || "";
     if (!name) {
       name = "Неизвестная позиция (" + (row.Номенклатура_Key || "?") + ")";
       // Запоминаем "живой" пример нераспознанной строки (один раз) — чтобы по
@@ -277,7 +321,7 @@ async function refresh() {
   const ordersFilter = "Date ge " + dateFrom;
   const realizFilter = "Date ge " + dateFrom;
 
-  const { rows: invoicesAll, expandUsed } = await fetchInvoices(ordersFilter);
+  const { rows: invoicesAll, expandUsed, expandError } = await fetchInvoices(ordersFilter);
   console.log("[1C] счета получены, $expand=" + (expandUsed || "(без expand)") + ", строк: " + invoicesAll.length);
 
   const realizations = await fetchEntitySet("Document_РеализацияТоваровУслуг", {
@@ -292,6 +336,18 @@ async function refresh() {
 
   const nomMap = new Map();
   nomRows.forEach((r) => { if (r.Ref_Key) nomMap.set(String(r.Ref_Key).toLowerCase(), r.Description || ""); });
+
+  // Запасной справочник для строк товара, которые ссылаются на характеристику
+  // (вариант товара), а не на сам товар напрямую — см. fetchCharacteristics().
+  const { rows: charRows, error: charFetchError } = await fetchCharacteristics();
+  const charMap = new Map();
+  charRows.forEach((r) => {
+    if (!r.Ref_Key) return;
+    const ownerName = r.Владелец_Key ? nomMap.get(String(r.Владелец_Key).toLowerCase()) : "";
+    const desc = r.Description || "";
+    const full = ownerName ? ownerName + " - " + desc : desc;
+    if (full) charMap.set(String(r.Ref_Key).toLowerCase(), full);
+  });
 
   // Множество Ref_Key счетов, на основании которых уже сделана отгрузка (Реализация),
   // независимо от того, проведена ли реализация — см. комментарий выше про dateFrom.
@@ -332,7 +388,7 @@ async function refresh() {
       tovaryFailCount++;
       if (!firstTovaryError) firstTovaryError = res.error.message;
     }
-    const built = buildOrderAndItems(inv, rows, nomMap, diag);
+    const built = buildOrderAndItems(inv, rows, nomMap, charMap, diag);
     ordersRaw.push(built.order);
     itemsRaw = itemsRaw.concat(built.items);
   });
@@ -380,6 +436,9 @@ async function refresh() {
       tovaryExpand,
       respEmptyCount,
       respSample,
+      invoiceExpandError: expandError ? String(expandError).slice(0, 300) : null,
+      charCount: charRows.length,
+      charFetchError: charFetchError ? String(charFetchError).slice(0, 300) : null,
       unresolvedSampleJson: diag.unresolvedSample ? JSON.stringify(diag.unresolvedSample).slice(0, 400) : null,
     },
   };
