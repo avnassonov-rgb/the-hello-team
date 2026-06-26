@@ -11,6 +11,7 @@ const auth = require("./auth");
 const bitrix = require("./bitrix");
 const bitrixApp = require("./bitrixApp");
 const oneC = require("./oneC");
+const kaspi = require("./kaspi");
 
 const INSTALL_HTML = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
   "<title>THE HELLO — установка приложения</title></head>" +
@@ -195,6 +196,15 @@ const server = http.createServer((req, res) => {
       return oneC.refreshSafe().then((result) => {
         sendJSON(res, 200, { ok: result.ok, error: result.error || null, state: store.readState() });
       });
+    }
+    if (pathname === "/api/kaspi/debug" && req.method === "GET") {
+      const q = parsed.query || {};
+      const allowedStates = ["NEW", "SIGN_REQUIRED", "PICKUP", "DELIVERY", "KASPI_DELIVERY", "ARCHIVE"];
+      const state = allowedStates.indexOf(q.state) !== -1 ? q.state : "NEW";
+      const maxOrders = Math.min(parseInt(q.n, 10) || 5, 20);
+      return kaspi.debugSample({ state: state, maxOrders: maxOrders })
+        .then((result) => sendJSON(res, 200, { ok: true, result: result }))
+        .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
     }
     if (pathname === "/api/bitrix/report" && req.method === "GET") {
       const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
