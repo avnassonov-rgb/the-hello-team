@@ -57,7 +57,7 @@ function httpGetJSON(pathAndQuery, timeoutMs) {
 async function getOrders(opts) {
   opts = opts || {};
   const state = opts.state || "NEW";
-  const sinceMs = opts.sinceMs || (Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const sinceMs = opts.sinceMs || (Date.now() - 13 * 24 * 60 * 60 * 1000); // Kaspi разрешает не больше 14 дней за раз
   const q = buildQuery([
     ["page[number]", opts.pageNumber || 0],
     ["page[size]", opts.pageSize || 20],
