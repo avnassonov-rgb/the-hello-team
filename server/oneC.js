@@ -32,6 +32,7 @@
 const https = require("https");
 const { URL } = require("url");
 const store = require("./store");
+const telegram = require("./telegram");
 
 const DEFAULT_BASE_URL = "https://buh.uchet.kz/Y2baelrail1163/odata/standard.odata/";
 
@@ -528,6 +529,8 @@ async function refreshSafe() {
   try {
     const meta = await refresh();
     console.log("[1C] синк ок: заказов " + meta.ordersCount + ", позиций " + meta.itemsCount + (meta.skippedShipped ? (", уже отгружено " + meta.skippedShipped) : ""));
+    telegram.notifyIfChanged(store, "onec", "План производства (1С)", meta.lastSyncError || null)
+      .catch((e) => console.error("[telegram] notifyIfChanged упал: " + e.message));
     return { ok: true, meta };
   } catch (e) {
     console.error("[1C] синк упал: " + e.message);
@@ -539,6 +542,8 @@ async function refreshSafe() {
       lastSyncError: e.message,
     });
     store.patchState({ meta });
+    telegram.notifyIfChanged(store, "onec", "План производства (1С)", e.message)
+      .catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
     return { ok: false, error: e.message };
   }
 }

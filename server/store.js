@@ -25,6 +25,7 @@ const DEFAULT_STATE = {
   bitrixApp: null, // { accessToken, refreshToken, expiresAt, domain, memberId, clientEndpoint }
   bitrixEvents: [], // [{ time, entityType, entityId, type, fromStage, toStage, actorId, actorName }]
   bitrixStageCache: {}, // "deal:123" -> текущий STAGE_ID/STATUS_ID, известный с прошлого события
+  notifyState: {}, // "onec"/"bitrix"/"kaspi" -> текст последней отправленной в Telegram ошибки (или null)
 };
 
 const MAX_BITRIX_EVENTS = 5000;

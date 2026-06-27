@@ -445,4 +445,13 @@ async function getManagerReport(webhookUrl, range) {
   };
 }
 
-module.exports = { getManagerReport, periodRange, customRange };
+// Лёгкая проверка связи с Bitrix24 — для фонового мониторинга (Telegram-уведомления),
+// не делает ничего, кроме одного дешёвого вызова. Бросает исключение при сбое.
+async function healthCheck(webhookUrl) {
+  if (!webhookUrl) {
+    throw new Error("Вебхук Bitrix24 не настроен (переменная окружения BITRIX_WEBHOOK_URL)");
+  }
+  await callMethod(webhookUrl, "app.info", {});
+}
+
+module.exports = { getManagerReport, periodRange, customRange, healthCheck };

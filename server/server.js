@@ -12,6 +12,7 @@ const bitrix = require("./bitrix");
 const bitrixApp = require("./bitrixApp");
 const oneC = require("./oneC");
 const kaspi = require("./kaspi");
+const telegram = require("./telegram");
 
 const INSTALL_HTML = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
   "<title>THE HELLO — установка приложения</title></head>" +
@@ -206,6 +207,19 @@ const server = http.createServer((req, res) => {
         .then((result) => sendJSON(res, 200, { ok: true, result: result }))
         .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
     }
+    if (pathname === "/api/kaspi/products" && req.method === "GET") {
+      const q = parsed.query || {};
+      const allowedStates = ["NEW", "SIGN_REQUIRED", "PICKUP", "DELIVERY", "KASPI_DELIVERY", "ARCHIVE"];
+      const state = allowedStates.indexOf(q.state) !== -1 ? q.state : "ARCHIVE";
+      const maxOrders = Math.min(parseInt(q.n, 10) || 40, 100);
+      return kaspi.listDistinctProducts({ state: state, maxOrders: maxOrders })
+        .then((result) => sendJSON(res, 200, { ok: true, result: result }))
+        .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
+    }
+    if (pathname === "/api/telegram/test" && req.method === "GET") {
+      return telegram.send("✅ Тестовое сообщение от дашборда THE HELLO Team — бот настроен правильно.")
+        .then((result) => sendJSON(res, 200, result));
+    }
     if (pathname === "/api/bitrix/report" && req.method === "GET") {
       const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
       if (!webhookUrl) {
@@ -251,5 +265,43 @@ server.listen(PORT, () => {
     setInterval(() => { oneC.refreshSafe(); }, ONE_C_INTERVAL_MS);
   } else {
     console.log("[1C] автосинк выключен — не задана переменная окружения ONEC_PASSWORD");
+  }
+
+  // ---- фоновая проверка связи с Bitrix24 (для вкладки «Менеджеры»): раз в 10 минут,
+  // отдельно от обычных запросов отчёта — чтобы ловить сбой даже если никто не
+  // открывал вкладку. При смене состояния (ошибка появилась/пропала) — Telegram. ----
+  const BITRIX_CHECK_INTERVAL_MS = 10 * 60 * 1000;
+  function checkBitrixHealth() {
+    const webhookUrl = process.env.BITRIX_WEBHOOK_URL;
+    if (!webhookUrl) return;
+    bitrix.healthCheck(webhookUrl)
+      .then(() => telegram.notifyIfChanged(store, "bitrix", "Менеджеры (Bitrix24)", null))
+      .catch((e) => telegram.notifyIfChanged(store, "bitrix", "Менеджеры (Bitrix24)", e.message))
+      .catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
+  }
+  if (process.env.BITRIX_WEBHOOK_URL) {
+    console.log("[bitrix] фоновая проверка связи включена — каждые 10 минут");
+    setTimeout(checkBitrixHealth, 5000);
+    setInterval(checkBitrixHealth, BITRIX_CHECK_INTERVAL_MS);
+  } else {
+    console.log("[bitrix] фоновая проверка выключена — не задана переменная BITRIX_WEBHOOK_URL");
+  }
+
+  // ---- фоновая проверка связи/токена Kaspi: раз в 15 минут. Пока это только
+  // диагностика (сам перенос заказов Kaspi → 1С ещё не реализован) — но как
+  // только он появится, эта же проверка будет страховать и его. ----
+  const KASPI_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+  function checkKaspiHealth() {
+    kaspi.healthCheck()
+      .then(() => telegram.notifyIfChanged(store, "kaspi", "Kaspi API", null))
+      .catch((e) => telegram.notifyIfChanged(store, "kaspi", "Kaspi API", e.message))
+      .catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
+  }
+  if (process.env.KASPI_TOKEN) {
+    console.log("[kaspi] фоновая проверка связи включена — каждые 15 минут");
+    setTimeout(checkKaspiHealth, 7000);
+    setInterval(checkKaspiHealth, KASPI_CHECK_INTERVAL_MS);
+  } else {
+    console.log("[kaspi] фоновая проверка выключена — не задана переменная KASPI_TOKEN");
   }
 });

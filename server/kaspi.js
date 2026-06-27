@@ -134,4 +134,81 @@ async function debugSample(opts) {
   return { state: state, ordersFound: list.totalCount != null ? list.totalCount : list.items.length, sample: sample };
 }
 
-module.exports = { getOrders, getOrderEntries, getEntryProduct, debugSample };
+// Запускает несколько асинхронных задач параллельно (с ограничением), чтобы не
+// делать сотни запросов строго по одному и не перегружать сервер Kaspi.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const idx = next++;
+      try {
+        results[idx] = await fn(items[idx], idx);
+      } catch (e) {
+        results[idx] = null;
+      }
+    }
+  }
+  const workers = [];
+  for (let w = 0; w < Math.min(limit, items.length); w++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// Собирает список уникальных товаров (код + название) по последним заказам —
+// чтобы было проще и быстрее заполнять таблицу соответствия Kaspi↔1С.
+// Помечает похожие на наборы по словам в названии (набор/комплект/2в1 и т.п.).
+async function listDistinctProducts(opts) {
+  opts = opts || {};
+  if (!token()) {
+    throw new Error("Не задан KASPI_TOKEN — добавьте переменную окружения в настройках Render (Environment) и перезапустите сервис.");
+  }
+  const state = opts.state || "ARCHIVE";
+  const maxOrders = Math.min(opts.maxOrders || 40, 100);
+  const list = await getOrders({ state: state, pageSize: maxOrders, timeoutMs: opts.timeoutMs });
+  const orders = list.items.slice(0, maxOrders);
+
+  const productMap = new Map(); // code -> { name, count }
+  await mapWithConcurrency(orders, 5, async (o) => {
+    let entries;
+    try {
+      entries = await getOrderEntries(o.id, 15000);
+    } catch (e) {
+      return;
+    }
+    for (const e of entries) {
+      let product;
+      try {
+        product = await getEntryProduct(e.id, 15000);
+      } catch (err) {
+        continue;
+      }
+      const pa = (product && product.attributes) || {};
+      if (!pa.code) continue;
+      if (!productMap.has(pa.code)) productMap.set(pa.code, { name: pa.name || null, count: 0 });
+      productMap.get(pa.code).count++;
+    }
+  });
+
+  const KIT_HINTS = ["набор", "комплект", "2в1", "3в1", "4в1", "увлажн"];
+  const products = Array.from(productMap.entries()).map(([code, v]) => ({
+    code: code,
+    name: v.name,
+    seenInOrders: v.count,
+    looksLikeKit: KIT_HINTS.some((h) => (v.name || "").toLowerCase().includes(h)),
+  }));
+  products.sort((a, b) => (a.looksLikeKit === b.looksLikeKit ? 0 : a.looksLikeKit ? -1 : 1));
+
+  return { state: state, ordersScanned: orders.length, distinctProducts: products.length, products: products };
+}
+
+// Лёгкая проверка связи/токена Kaspi — для фонового мониторинга (Telegram-уведомления).
+// Один минимальный запрос (1 заказ), не тянет позиции/товары. Бросает исключение при сбое.
+async function healthCheck() {
+  if (!token()) {
+    throw new Error("Не задан KASPI_TOKEN — добавьте переменную окружения в настройках Render (Environment) и перезапустите сервис.");
+  }
+  await getOrders({ state: "ARCHIVE", pageSize: 1, timeoutMs: 15000 });
+}
+
+module.exports = { getOrders, getOrderEntries, getEntryProduct, debugSample, listDistinctProducts, healthCheck };
