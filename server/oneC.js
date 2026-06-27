@@ -648,13 +648,33 @@ async function fetchMetadataFragment(entityTypeNameSubstring, maxLen) {
   const xml = await httpGetTextWithAuth(baseUrl() + "$metadata", 30000);
   const re = new RegExp("<EntityType Name=\"[^\"]*" + entityTypeNameSubstring + "[^\"]*\"[\\s\\S]*?</EntityType>", "i");
   const m = xml.match(re);
-  if (!m) return { found: false, fragment: null, propertyNames: [] };
+  if (!m) return { found: false, fragment: null, propertyNames: [], properties: [] };
   const fragment = m[0];
-  const propRe = /<(?:Property|NavigationProperty) Name="([^"]+)"/g;
+  // Раньше брали только имена свойств. Теперь дополнительно вытаскиваем
+  // Type и Nullable у каждого свойства — это позволяет увидеть, какие поля
+  // обязательны (Nullable="false") без перебора вслепую, что именно ломает
+  // создание документа через POST (1С отвечает общей HTTP 500 без деталей).
+  const propRe = /<(Property|NavigationProperty)\s+([^>]*?)\/?>/g;
   const names = [];
+  const properties = [];
   let pm;
-  while ((pm = propRe.exec(fragment))) names.push(pm[1]);
-  return { found: true, fragment: fragment.slice(0, maxLen || 6000), propertyNames: names };
+  while ((pm = propRe.exec(fragment))) {
+    const kind = pm[1];
+    const attrsStr = pm[2];
+    const nameMatch = attrsStr.match(/Name="([^"]+)"/);
+    const typeMatch = attrsStr.match(/Type="([^"]+)"/);
+    const nullableMatch = attrsStr.match(/Nullable="([^"]+)"/);
+    const name = nameMatch ? nameMatch[1] : null;
+    if (!name) continue;
+    names.push(name);
+    properties.push({
+      name,
+      kind,
+      type: typeMatch ? typeMatch[1] : null,
+      nullable: nullableMatch ? nullableMatch[1] : null,
+    });
+  }
+  return { found: true, fragment: fragment.slice(0, maxLen || 6000), propertyNames: names, properties };
 }
 
 function norm1C(s) {
