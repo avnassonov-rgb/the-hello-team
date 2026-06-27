@@ -548,4 +548,259 @@ async function refreshSafe() {
   }
 }
 
-module.exports = { refresh, refreshSafe };
+/* ---------------- запись (создание Реализации для заказов Kaspi) ----------------
+   Стандартный OData 1С поддерживает создание записи через POST на сам набор
+   сущностей (Document_РеализацияТоваровУслуг) с телом нового документа —
+   сервер возвращает созданную запись (Ref_Key, Number).
+   Названия некоторых реквизитов в этой конфигурации не подтверждены живым
+   тестом (в песочнице нет сети до uchet.kz) — поэтому там, где есть
+   неопределённость (поле "Структурная единица"), пробуем по очереди несколько
+   вариантов имени и ориентируемся на ответ сервера. Остальные поля
+   (Контрагент_Key/Договор_Key/Склад_Key/Комментарий/табличная часть "Товары")
+   — стандартные для этого типа документа в любой конфигурации 1С:Бухгалтерия. */
+function httpWriteJSON(method, fullUrl, bodyObj, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try {
+      u = new URL(fullUrl);
+    } catch (e) {
+      return reject(new Error("некорректный адрес — " + fullUrl));
+    }
+    const payload = Buffer.from(JSON.stringify(bodyObj), "utf8");
+    const auth = Buffer.from(oneCUser() + ":" + oneCPassword()).toString("base64");
+    const options = {
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + (u.search || ""),
+      method: method,
+      headers: {
+        Authorization: "Basic " + auth,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Content-Length": payload.length,
+      },
+      timeout: timeoutMs || 30000,
+    };
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          return reject(new Error("доступ запрещён (" + res.statusCode + ") — проверьте ONEC_USER/ONEC_PASSWORD"));
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error("HTTP " + res.statusCode + ": " + raw.slice(0, 500)));
+        }
+        if (!raw) return resolve({});
+        try {
+          resolve(JSON.parse(raw));
+        } catch (e) {
+          reject(new Error("ответ не в формате JSON: " + raw.slice(0, 300)));
+        }
+      });
+    });
+    req.on("error", (e) => reject(new Error(e.message)));
+    req.on("timeout", () => req.destroy(new Error("таймаут запроса")));
+    req.write(payload);
+    req.end();
+  });
+}
+
+/* Диагностика: сырой $metadata (XML) — чтобы один раз посмотреть настоящие
+   имена реквизитов документа, а не угадывать их. Без модуля для разбора XML —
+   ищем регулярным выражением (формат $metadata предсказуем по структуре тегов). */
+function httpGetTextWithAuth(fullUrl, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try {
+      u = new URL(fullUrl);
+    } catch (e) {
+      return reject(new Error("некорректный адрес — " + fullUrl));
+    }
+    const auth = Buffer.from(oneCUser() + ":" + oneCPassword()).toString("base64");
+    const options = {
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + (u.search || ""),
+      method: "GET",
+      headers: { Authorization: "Basic " + auth, Accept: "application/xml" },
+      timeout: timeoutMs || 30000,
+    };
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error("HTTP " + res.statusCode + ": " + raw.slice(0, 300)));
+        }
+        resolve(raw);
+      });
+    });
+    req.on("error", (e) => reject(new Error(e.message)));
+    req.on("timeout", () => req.destroy(new Error("таймаут запроса")));
+    req.end();
+  });
+}
+
+async function fetchMetadataFragment(entityTypeNameSubstring, maxLen) {
+  const xml = await httpGetTextWithAuth(baseUrl() + "$metadata", 30000);
+  const re = new RegExp("<EntityType Name=\"[^\"]*" + entityTypeNameSubstring + "[^\"]*\"[\\s\\S]*?</EntityType>", "i");
+  const m = xml.match(re);
+  if (!m) return { found: false, fragment: null, propertyNames: [] };
+  const fragment = m[0];
+  const propRe = /<(?:Property|NavigationProperty) Name="([^"]+)"/g;
+  const names = [];
+  let pm;
+  while ((pm = propRe.exec(fragment))) names.push(pm[1]);
+  return { found: true, fragment: fragment.slice(0, maxLen || 6000), propertyNames: names };
+}
+
+function norm1C(s) {
+  return String(s || "").trim().toLowerCase();
+}
+
+/* Поиск элемента справочника по точному названию (Description) — без GUID,
+   заданных вручную. Перебирает несколько вариантов имени набора сущностей,
+   как и fetchRefCatalogMap. Если задан ownerKeyFilter — среди совпадений по
+   названию предпочитает строку с этим Владелец_Key (нужно для "Договор",
+   который ищется внутри конкретного контрагента). */
+async function resolveRefByName(candidateEntityNames, targetName, opts) {
+  opts = opts || {};
+  const wanted = norm1C(targetName);
+  let lastError = null;
+  for (const entityName of candidateEntityNames) {
+    try {
+      const rows = await fetchEntitySet(entityName, {
+        select: opts.selectFields || "Ref_Key,Description,Владелец_Key",
+        pageSize: 1000,
+      });
+      const matches = rows.filter((r) => norm1C(r.Description) === wanted);
+      if (matches.length === 0) {
+        lastError = "[" + entityName + "] нет записи с названием «" + targetName + "» (всего строк: " + rows.length + ")";
+        continue;
+      }
+      let row = matches[0];
+      if (opts.ownerKeyFilter && matches.length > 1) {
+        const preferred = matches.find(
+          (r) => r.Владелец_Key && String(r.Владелец_Key).toLowerCase() === String(opts.ownerKeyFilter).toLowerCase()
+        );
+        if (preferred) row = preferred;
+      }
+      return { ref: row.Ref_Key, usedEntity: entityName, matchCount: matches.length, error: null };
+    } catch (e) {
+      lastError = "[" + entityName + "] " + e.message;
+    }
+  }
+  return { ref: null, usedEntity: null, matchCount: 0, error: lastError };
+}
+
+// Карта "название товара в 1С" -> Ref_Key — чтобы переносить заказы Kaspi,
+// сопоставляя по точному названию из таблицы соответствия (mappingTable.js),
+// без необходимости вручную прописывать GUID каждого товара.
+async function fetchNomenclatureByNameMap() {
+  const rows = await fetchEntitySet("Catalog_Номенклатура", { select: "Ref_Key,Description", pageSize: 500 });
+  const map = new Map();
+  rows.forEach((r) => {
+    if (r.Ref_Key && r.Description) map.set(norm1C(r.Description), r.Ref_Key);
+  });
+  return map;
+}
+
+/* Создаёт документ "Реализация товаров и услуг" по заказу Kaspi.
+   Структурная единица/Контрагент/Договор/Склад/Ответственный — одинаковые для
+   всех заказов Kaspi (подтверждено Александром), их Ref_Key резолвятся один
+   раз за весь запуск переноса (см. kaspiTransfer.js) и передаются сюда готовыми.
+   tryPost=true: сначала пробуем создать СРАЗУ проведённым (как Александр делает
+   вручную). Если 1С откажется проводить (например, не хватает остатка товара
+   на складе) — создаём тот же документ непроведённым: это ожидаемая, штатная
+   ситуация, бухгалтерия проведёт вручную позже (подтверждено Александром). */
+const ORG_FIELD_CANDIDATES = ["СтруктурнаяЕдиница_Key", "Организация_Key"];
+
+function looksLikeUnknownFieldError(message) {
+  const m = String(message || "").toLowerCase();
+  return (
+    m.indexOf("не найдено свойство") !== -1 ||
+    m.indexOf("свойство не найдено") !== -1 ||
+    m.indexOf("не существует свойств") !== -1 ||
+    m.indexOf("invalid property") !== -1 ||
+    m.indexOf("unknown property") !== -1 ||
+    m.indexOf("http 400") !== -1
+  );
+}
+
+async function createRealizationDocument(opts) {
+  if (!oneCPassword()) {
+    throw new Error("Не задан пароль 1С: установите переменную окружения ONEC_PASSWORD в настройках Render");
+  }
+  const { orgRef, contrRef, dogovorRef, skladRef, respRef, comment, dateIso, lines, tryPost } = opts;
+
+  function buildBody(orgFieldName, posted) {
+    const body = {
+      Date: dateIso,
+      Комментарий: comment || "",
+      Контрагент_Key: contrRef,
+      Договор_Key: dogovorRef,
+      Склад_Key: skladRef,
+      Ответственный_Key: respRef,
+      Posted: !!posted,
+      Товары: (lines || []).map((l) => ({
+        Номенклатура_Key: l.nomKey,
+        Количество: l.qty,
+        Цена: l.price,
+        Сумма: Math.round(l.qty * l.price * 100) / 100,
+      })),
+    };
+    body[orgFieldName] = orgRef;
+    return body;
+  }
+
+  async function attempt(posted) {
+    let lastErr = null;
+    for (const fieldName of ORG_FIELD_CANDIDATES) {
+      const body = buildBody(fieldName, posted);
+      try {
+        const json = await httpWriteJSON("POST", baseUrl() + "Document_РеализацияТоваровУслуг", body, 30000);
+        return { raw: json, orgFieldUsed: fieldName };
+      } catch (e) {
+        lastErr = e;
+        if (!looksLikeUnknownFieldError(e.message)) throw e; // другая проблема — дальше не перебираем
+      }
+    }
+    throw lastErr || new Error("не удалось создать документ — нет подходящего варианта имени поля");
+  }
+
+  if (tryPost) {
+    try {
+      const res = await attempt(true);
+      return {
+        posted: true,
+        ref: res.raw && res.raw.Ref_Key,
+        number: res.raw && res.raw.Number,
+        orgFieldUsed: res.orgFieldUsed,
+        fallback: false,
+      };
+    } catch (e) {
+      console.warn("[1C] не удалось создать Реализацию проведённой (" + e.message + ") — пробуем непроведённой");
+    }
+  }
+
+  const res2 = await attempt(false);
+  return {
+    posted: false,
+    ref: res2.raw && res2.raw.Ref_Key,
+    number: res2.raw && res2.raw.Number,
+    orgFieldUsed: res2.orgFieldUsed,
+    fallback: !!tryPost,
+  };
+}
+
+module.exports = {
+  refresh,
+  refreshSafe,
+  fetchMetadataFragment,
+  resolveRefByName,
+  fetchNomenclatureByNameMap,
+  createRealizationDocument,
+};

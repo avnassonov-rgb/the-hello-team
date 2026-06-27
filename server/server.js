@@ -13,6 +13,7 @@ const bitrixApp = require("./bitrixApp");
 const oneC = require("./oneC");
 const kaspi = require("./kaspi");
 const telegram = require("./telegram");
+const kaspiTransfer = require("./kaspiTransfer");
 
 const INSTALL_HTML = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
   "<title>THE HELLO — установка приложения</title></head>" +
@@ -216,6 +217,25 @@ const server = http.createServer((req, res) => {
         .then((result) => sendJSON(res, 200, { ok: true, result: result }))
         .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
     }
+    if (pathname === "/api/kaspi-transfer/run" && req.method === "POST") {
+      const q = parsed.query || {};
+      const options = {};
+      if (q.orderId) options.orderId = q.orderId;
+      if (q.dryRun === "1" || q.dryRun === "true") options.dryRun = true;
+      return kaspiTransfer.runKaspiTransferSafe(options).then((result) => {
+        sendJSON(res, 200, { ok: result.ok, error: result.error || null, summary: result.summary || null, state: store.getKaspiTransferState() });
+      });
+    }
+    if (pathname === "/api/kaspi-transfer/status" && req.method === "GET") {
+      return sendJSON(res, 200, { ok: true, state: store.getKaspiTransferState() });
+    }
+    if (pathname === "/api/onec/metadata" && req.method === "GET") {
+      const q = parsed.query || {};
+      const substr = q.entity || "РеализацияТоваровУслуг";
+      return oneC.fetchMetadataFragment(substr, 8000)
+        .then((result) => sendJSON(res, 200, { ok: true, result: result }))
+        .catch((err) => sendJSON(res, 200, { ok: false, error: "onec_error", message: err.message }));
+    }
     if (pathname === "/api/telegram/test" && req.method === "GET") {
       return telegram.send("✅ Тестовое сообщение от дашборда THE HELLO Team — бот настроен правильно.")
         .then((result) => sendJSON(res, 200, result));
@@ -303,5 +323,42 @@ server.listen(PORT, () => {
     setInterval(checkKaspiHealth, KASPI_CHECK_INTERVAL_MS);
   } else {
     console.log("[kaspi] фоновая проверка выключена — не задана переменная KASPI_TOKEN");
+  }
+
+  // ---- перенос заказов Kaspi → 1С: запускается строго 2 раза в день, в 08:00
+  // и 13:10 по времени Костаная (UTC+5, без перевода времени на зиму/лето —
+  // поэтому это ровно 03:00 и 08:10 по UTC, без исключений). НЕ постоянный
+  // цикл — раз запущено в нужный момент, следующий запуск планируется через
+  // ровно 24 часа (смещение Костаная фиксированное, поэтому 24 часа = снова
+  // то же самое время суток в Костанае, без накопления ошибки). ----
+  function msUntilNextUtcTime(hourUtc, minuteUtc) {
+    const now = new Date();
+    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hourUtc, minuteUtc, 0, 0));
+    if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+    return next.getTime() - now.getTime();
+  }
+  function scheduleDailyKaspiTransfer(hourUtc, minuteUtc, label) {
+    const delayMs = msUntilNextUtcTime(hourUtc, minuteUtc);
+    console.log("[kaspiTransfer] запуск \"" + label + "\" запланирован через " + Math.round(delayMs / 60000) + " мин.");
+    setTimeout(function fireAndRepeat() {
+      console.log("[kaspiTransfer] запуск \"" + label + "\" (по расписанию)");
+      kaspiTransfer.runKaspiTransferSafe();
+      setInterval(() => {
+        console.log("[kaspiTransfer] запуск \"" + label + "\" (по расписанию)");
+        kaspiTransfer.runKaspiTransferSafe();
+      }, 24 * 60 * 60 * 1000);
+    }, delayMs);
+  }
+  const kaspiTransferReady = process.env.ONEC_PASSWORD && process.env.KASPI_TOKEN && process.env.MAPPING_SHEET_CSV_URL;
+  if (kaspiTransferReady) {
+    console.log("[kaspiTransfer] расписание включено — запуск в 08:00 и 13:10 по Костанаю");
+    scheduleDailyKaspiTransfer(3, 0, "08:00 Костанай");
+    scheduleDailyKaspiTransfer(8, 10, "13:10 Костанай");
+  } else {
+    const missing = [];
+    if (!process.env.ONEC_PASSWORD) missing.push("ONEC_PASSWORD");
+    if (!process.env.KASPI_TOKEN) missing.push("KASPI_TOKEN");
+    if (!process.env.MAPPING_SHEET_CSV_URL) missing.push("MAPPING_SHEET_CSV_URL");
+    console.log("[kaspiTransfer] расписание выключено — не заданы переменные: " + missing.join(", "));
   }
 });

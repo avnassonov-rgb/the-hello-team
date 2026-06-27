@@ -211,4 +211,82 @@ async function healthCheck() {
   await getOrders({ state: "ARCHIVE", pageSize: 1, timeoutMs: 15000 });
 }
 
-module.exports = { getOrders, getOrderEntries, getEntryProduct, debugSample, listDistinctProducts, healthCheck };
+/* ---------------- запись (продвижение заказа) ----------------
+   Документация Kaspi Гид (guide.kaspi.kz/partner/ru/shop/api/orders):
+   - q3209 "изменить статус заказа" — общий список допустимых статусов.
+   - q3211 "принять новый заказ" — status: ACCEPTED_BY_MERCHANT.
+   - q3210 "сформировать накладную для передачи на Kaspi Доставку" —
+     status: ASSEMBLE + numberOfSpace (кол-во мест/коробок) — именно это
+     действие переводит заказ из "Упаковка" в "Передача" и формирует накладную.
+   Все запросы — POST /orders с тем же телом независимо от целевого статуса:
+   { data: { type: "orders", id: <orderId>, attributes: {...} } } */
+function httpPostJSON(pathAndQuery, body, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body), "utf8");
+    const options = {
+      hostname: HOST,
+      path: BASE_PATH + pathAndQuery,
+      method: "POST",
+      headers: {
+        "X-Auth-Token": token(),
+        "Accept": "*/*",
+        "Content-Type": "application/vnd.api+json",
+        "Content-Length": payload.length,
+      },
+      timeout: timeoutMs || 20000,
+    };
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error("Kaspi API [" + res.statusCode + "]: " + raw.slice(0, 500)));
+        }
+        if (!raw) return resolve({});
+        try {
+          resolve(JSON.parse(raw));
+        } catch (e) {
+          reject(new Error("Kaspi API: ответ не в формате JSON — " + raw.slice(0, 200)));
+        }
+      });
+    });
+    req.on("error", (e) => reject(new Error("Kaspi API: ошибка соединения — " + e.message)));
+    req.on("timeout", () => req.destroy(new Error("Kaspi API: таймаут запроса")));
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function setOrderStatus(orderId, attributes, timeoutMs) {
+  if (!token()) {
+    throw new Error("Не задан KASPI_TOKEN — добавьте переменную окружения в настройках Render (Environment) и перезапустите сервис.");
+  }
+  const body = { data: { type: "orders", id: String(orderId), attributes: attributes } };
+  const json = await httpPostJSON("orders", body, timeoutMs);
+  return (json && json.data) || null;
+}
+
+// Принять новый заказ (статус NEW/SIGN_REQUIRED → ACCEPTED_BY_MERCHANT).
+// orderCode — номер заказа (атрибут code), как в примере документации q3211.
+async function acceptOrder(orderId, orderCode, timeoutMs) {
+  return setOrderStatus(orderId, { code: String(orderCode), status: "ACCEPTED_BY_MERCHANT" }, timeoutMs);
+}
+
+// Скомплектовать заказ → формирует накладную и переводит в "Передача" (q3210).
+// numberOfSpace — количество мест/коробок, по умолчанию "1".
+async function assembleOrder(orderId, numberOfSpace, timeoutMs) {
+  return setOrderStatus(orderId, { status: "ASSEMBLE", numberOfSpace: String(numberOfSpace || 1) }, timeoutMs);
+}
+
+module.exports = {
+  getOrders,
+  getOrderEntries,
+  getEntryProduct,
+  debugSample,
+  listDistinctProducts,
+  healthCheck,
+  acceptOrder,
+  assembleOrder,
+  setOrderStatus,
+};
