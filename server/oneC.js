@@ -652,10 +652,14 @@ async function fetchMetadataFragment(entityTypeNameSubstring, maxLen) {
   // раньше нужного. Сначала пробуем ТОЧНОЕ совпадение имени (с обычными
   // префиксами Catalog_/Document_), и только если такого нет — ищем по
   // подстроке как раньше (запасной путь).
-  const exactRe = new RegExp("<EntityType Name=\"(?:Catalog_|Document_)?" + entityTypeNameSubstring + "\"[\\s\\S]*?</EntityType>", "i");
+  // Строки табличных частей документов (напр. "Товары") в 1С описаны как
+  // <ComplexType>, а не <EntityType> — раньше искали только EntityType,
+  // из-за этого fetchMetadataFragment("...Товары_RowType") не находил ничего
+  // (found:false), хотя тип в metadata есть.
+  const exactRe = new RegExp("<(?:EntityType|ComplexType) Name=\"(?:Catalog_|Document_)?" + entityTypeNameSubstring + "\"[\\s\\S]*?</(?:EntityType|ComplexType)>", "i");
   let m = xml.match(exactRe);
   if (!m) {
-    const looseRe = new RegExp("<EntityType Name=\"[^\"]*" + entityTypeNameSubstring + "[^\"]*\"[\\s\\S]*?</EntityType>", "i");
+    const looseRe = new RegExp("<(?:EntityType|ComplexType) Name=\"[^\"]*" + entityTypeNameSubstring + "[^\"]*\"[\\s\\S]*?</(?:EntityType|ComplexType)>", "i");
     m = xml.match(looseRe);
   }
   if (!m) return { found: false, fragment: null, propertyNames: [], properties: [] };
