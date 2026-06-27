@@ -36,7 +36,11 @@ function norm(s) {
 }
 
 function statesFromEnv() {
-  const raw = process.env.KASPI_TRANSFER_STATES || "PICKUP,DELIVERY";
+  // Подтверждено живым тестом: у этого магазина почти все заказы (100+) идут
+  // через доставку самого Kaspi ("KASPI_DELIVERY") — без неё в списке
+  // оказывалось лишь 2-3 случайных заказа из PICKUP/DELIVERY, а нужный заказ
+  // не находился вообще.
+  const raw = process.env.KASPI_TRANSFER_STATES || "PICKUP,DELIVERY,KASPI_DELIVERY";
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
 }
 function statusFromEnv() {
