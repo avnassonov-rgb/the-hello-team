@@ -669,16 +669,27 @@ function norm1C(s) {
 async function resolveRefByName(candidateEntityNames, targetName, opts) {
   opts = opts || {};
   const wanted = norm1C(targetName);
-  let lastError = null;
+  // "Владелец_Key" запрашиваем ТОЛЬКО когда он реально нужен (ownerKeyFilter —
+  // например, поиск "Договора" внутри конкретного контрагента). У многих
+  // справочников (Организации, Контрагенты, Склады) такого поля вообще нет —
+  // запрос с ним падает с HTTP 400 ("Сегмент пути Владелец_Key не найден"),
+  // из-за чего поиск проваливался даже для правильного имени набора сущностей.
+  const selectFields = opts.selectFields || (opts.ownerKeyFilter ? "Ref_Key,Description,Владелец_Key" : "Ref_Key,Description");
+  // Собираем ошибку КАЖДОГО варианта имени справочника, а не только последнего —
+  // иначе при нескольких candidateEntityNames предыдущие ошибки "затираются" и
+  // не видно, что произошло на самом деле (например, первый вариант мог найти
+  // справочник, но не найти запись с таким названием — а показывалась только
+  // ошибка последнего, совсем другого варианта).
+  const errors = [];
   for (const entityName of candidateEntityNames) {
     try {
       const rows = await fetchEntitySet(entityName, {
-        select: opts.selectFields || "Ref_Key,Description,Владелец_Key",
+        select: selectFields,
         pageSize: 1000,
       });
       const matches = rows.filter((r) => norm1C(r.Description) === wanted);
       if (matches.length === 0) {
-        lastError = "[" + entityName + "] нет записи с названием «" + targetName + "» (всего строк: " + rows.length + ")";
+        errors.push("[" + entityName + "] нет записи с названием «" + targetName + "» (всего строк: " + rows.length + ")");
         continue;
       }
       let row = matches[0];
@@ -690,10 +701,10 @@ async function resolveRefByName(candidateEntityNames, targetName, opts) {
       }
       return { ref: row.Ref_Key, usedEntity: entityName, matchCount: matches.length, error: null };
     } catch (e) {
-      lastError = "[" + entityName + "] " + e.message;
+      errors.push("[" + entityName + "] " + e.message);
     }
   }
-  return { ref: null, usedEntity: null, matchCount: 0, error: lastError };
+  return { ref: null, usedEntity: null, matchCount: 0, error: errors.join(" | ") };
 }
 
 // Карта "название товара в 1С" -> Ref_Key — чтобы переносить заказы Kaspi,
