@@ -217,6 +217,13 @@ const server = http.createServer((req, res) => {
         .then((result) => sendJSON(res, 200, { ok: true, result: result }))
         .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
     }
+    if (pathname === "/api/kaspi/order-raw" && req.method === "GET") {
+      const q = parsed.query || {};
+      if (!q.code) return sendJSON(res, 200, { ok: false, error: "bad_request", message: "укажите ?code=<номер заказа>" });
+      return kaspi.getOrderRawByCode(q.code)
+        .then((result) => sendJSON(res, 200, { ok: true, result: result }))
+        .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
+    }
     if (pathname === "/api/kaspi-transfer/run" && req.method === "POST") {
       const q = parsed.query || {};
       const options = {};

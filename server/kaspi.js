@@ -202,6 +202,24 @@ async function listDistinctProducts(opts) {
   return { state: state, ordersScanned: orders.length, distinctProducts: products.length, products: products };
 }
 
+// Диагностика: полный "сырой" объект attributes заказа по его коду (как
+// видно в кабинете продавца, напр. "977274441") — БЕЗ выборки конкретных
+// полей, в отличие от debugSample/getOrders. Нужно, чтобы один раз увидеть
+// ВСЕ поля, которые реально отдаёт Kaspi для этого магазина — в частности
+// поле накладной (waybill / kaspiDelivery.waybill), которое официально не
+// описано в guide.kaspi.kz, но встречается в реальных ответах API после
+// перевода заказа в статус "Передача" (ASSEMBLE).
+async function getOrderRawByCode(code, timeoutMs) {
+  if (!token()) {
+    throw new Error("Не задан KASPI_TOKEN — добавьте переменную окружения в настройках Render (Environment) и перезапустите сервис.");
+  }
+  const q = buildQuery([["filter[orders][code]", code]]);
+  const json = await httpGetJSON("orders?" + q, timeoutMs || 20000);
+  const items = (json && json.data) || [];
+  if (items.length === 0) return { found: false, orderId: null, attributes: null };
+  return { found: true, orderId: items[0].id, attributes: items[0].attributes || {} };
+}
+
 // Лёгкая проверка связи/токена Kaspi — для фонового мониторинга (Telegram-уведомления).
 // Один минимальный запрос (1 заказ), не тянет позиции/товары. Бросает исключение при сбое.
 async function healthCheck() {
@@ -285,6 +303,7 @@ module.exports = {
   getEntryProduct,
   debugSample,
   listDistinctProducts,
+  getOrderRawByCode,
   healthCheck,
   acceptOrder,
   assembleOrder,
