@@ -54,9 +54,17 @@
   </section>
 
   <section id="tab-kaspi" class="tabpanel hidden">
-    <div class="empty-state">
-      <h3>Kaspi магазин</h3>
-      <p>Этот раздел в разработке.</p>
+    <div class="card">
+      <div class="plan-head">
+        <h2><span class="pill-tag">Перенос заказа Kaspi → 1С</span> <span class="sub">— безопасный тест на одном заказе перед тем, как доверять автоматическому переносу всех заказов</span></h2>
+      </div>
+      <p class="mgr-note">Введите код заказа Kaspi (как он показан в кабинете продавца, например 20013004). Сначала нажмите «Предпросмотр» — он ничего не запишет ни в 1С, ни в Kaspi, только покажет, что было бы создано. Если предпросмотр выглядит верно — нажмите «Перенести по-настоящему», это создаст Реализацию в 1С и продвинет именно этот заказ в Kaspi (Упаковка → Передача).</p>
+      <div class="period-switch" id="kaspiTestForm">
+        <label class="period-date-field">Код заказа<input type="text" id="kaspiTestOrderId" placeholder="напр. 20013004" style="width:160px;"></label>
+        <button class="pbtn" id="kaspiTestPreviewBtn" type="button">Предпросмотр (без записи)</button>
+        <button class="pbtn" id="kaspiTestRealBtn" type="button">Перенести по-настоящему</button>
+      </div>
+      <pre id="kaspiTestResult" class="hidden" style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:16px;margin-top:16px;font-size:13px;line-height:1.5;"></pre>
     </div>
     <div class="banner-wrap no-print" style="margin-top:var(--gap);">
       <img class="banner-img" src="/img/banner.png" alt="THE HELLO Team">
