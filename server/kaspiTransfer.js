@@ -158,11 +158,15 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved) {
     const componentCount = entry.components.length;
     const priceShare = ol.unitPrice / componentCount;
     let anyMissing = false;
+    // nomByName хранит {ref, unitKey} на товар (см. fetchNomenclatureByNameMap
+    // в oneC.js) — unitKey нужен в строке документа, иначе 1С падает с общей
+    // HTTP 500 при создании документа (нет единицы измерения).
     const lines = entry.components.map((comp) => {
-      const nomKey = nomByName.get(norm(comp.name1C));
-      if (!nomKey) anyMissing = true;
+      const nom = nomByName.get(norm(comp.name1C));
+      if (!nom || !nom.ref) anyMissing = true;
       return {
-        nomKey,
+        nomKey: nom ? nom.ref : null,
+        unitKey: nom ? nom.unitKey : null,
         qty: comp.qty * ol.qty,
         price: priceShare,
         compName: comp.name1C,
@@ -173,7 +177,7 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved) {
       unresolved.push("код " + ol.code + ": компонент(ы) не найдены в 1С — " + missingNames.join(", "));
       continue;
     }
-    lines.forEach((l) => docLines.push({ nomKey: l.nomKey, qty: l.qty, price: l.price }));
+    lines.forEach((l) => docLines.push({ nomKey: l.nomKey, qty: l.qty, price: l.price, unitKey: l.unitKey }));
   }
   return docLines;
 }
@@ -299,7 +303,7 @@ async function runKaspiTransfer(options) {
       dryRunPreview.push({
         orderCode,
         orderId: order.id,
-        wouldCreateRealizationLines: docLines.map((l) => ({ nomKey: l.nomKey, qty: l.qty, price: l.price })),
+        wouldCreateRealizationLines: docLines.map((l) => ({ nomKey: l.nomKey, qty: l.qty, price: l.price, unitKey: l.unitKey })),
         wouldAssembleNumberOfSpace: numberOfSpace,
       });
       continue;

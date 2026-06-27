@@ -750,14 +750,23 @@ async function resolveRefByName(candidateEntityNames, targetName, opts) {
   return { ref: null, usedEntity: null, matchCount: 0, error: errors.join(" | ") };
 }
 
-// Карта "название товара в 1С" -> Ref_Key — чтобы переносить заказы Kaspi,
-// сопоставляя по точному названию из таблицы соответствия (mappingTable.js),
-// без необходимости вручную прописывать GUID каждого товара.
+// Карта "название товара в 1С" -> {ref, unitKey} — чтобы переносить заказы
+// Kaspi, сопоставляя по точному названию из таблицы соответствия
+// (mappingTable.js), без необходимости вручную прописывать GUID каждого
+// товара. "БазоваяЕдиницаИзмерения_Key" — это и есть единица измерения товара
+// (подтверждено через GET /api/onec/metadata?entity=Номенклатура) — её Ref_Key
+// нужно передавать в строке документа "Реализация" (поле "ЕдиницаИзмерения_Key"),
+// иначе 1С падает с общей HTTP 500 при создании документа.
 async function fetchNomenclatureByNameMap() {
-  const rows = await fetchEntitySet("Catalog_Номенклатура", { select: "Ref_Key,Description", pageSize: 500 });
+  const rows = await fetchEntitySet("Catalog_Номенклатура", {
+    select: "Ref_Key,Description,БазоваяЕдиницаИзмерения_Key",
+    pageSize: 500,
+  });
   const map = new Map();
   rows.forEach((r) => {
-    if (r.Ref_Key && r.Description) map.set(norm1C(r.Description), r.Ref_Key);
+    if (r.Ref_Key && r.Description) {
+      map.set(norm1C(r.Description), { ref: r.Ref_Key, unitKey: r.БазоваяЕдиницаИзмерения_Key || null });
+    }
   });
   return map;
 }
@@ -808,11 +817,20 @@ async function createRealizationDocument(opts) {
       Склад_Key: skladRef,
       Ответственный_Key: respRef,
       Posted: !!posted,
+      // ЕдиницаИзмерения_Key/Коэффициент — раньше не передавались вообще.
+      // Поле формально Nullable="true" в $metadata, но стандартная форма 1С
+      // всегда заполняет его автоматически; через "сырой" OData POST
+      // автозаполнения нет, и 1С падает с общей HTTP 500 без unit'а.
+      // Берём базовую единицу измерения товара (БазоваяЕдиницаИзмерения_Key
+      // из Catalog_Номенклатура, см. fetchNomenclatureByNameMap) — раз продаём
+      // в базовой единице, коэффициент пересчёта = 1.
       Товары: (lines || []).map((l) => ({
         Номенклатура_Key: l.nomKey,
         Количество: l.qty,
         Цена: l.price,
         Сумма: Math.round(l.qty * l.price * 100) / 100,
+        ЕдиницаИзмерения_Key: l.unitKey || undefined,
+        Коэффициент: l.unitKey ? 1 : undefined,
       })),
     };
     body[orgFieldName] = orgRef;
