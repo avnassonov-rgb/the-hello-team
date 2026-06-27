@@ -356,11 +356,18 @@ server.listen(PORT, () => {
       }, 24 * 60 * 60 * 1000);
     }, delayMs);
   }
-  const kaspiTransferReady = process.env.ONEC_PASSWORD && process.env.KASPI_TOKEN && process.env.MAPPING_SHEET_CSV_URL;
+  // KASPI_TRANSFER_PAUSED=1 — ручной выключатель автозапуска (Александр ставит
+  // на паузу, пока сам не проконтролирует первые запуски среди недели). Ручной
+  // запуск через /api/kaspi-transfer/run этим выключателем НЕ затрагивается —
+  // он работает всегда, независимо от расписания.
+  const transferPaused = process.env.KASPI_TRANSFER_PAUSED === "1" || process.env.KASPI_TRANSFER_PAUSED === "true";
+  const kaspiTransferReady = !transferPaused && process.env.ONEC_PASSWORD && process.env.KASPI_TOKEN && process.env.MAPPING_SHEET_CSV_URL;
   if (kaspiTransferReady) {
     console.log("[kaspiTransfer] расписание включено — запуск в 08:00 и 13:10 по Костанаю");
     scheduleDailyKaspiTransfer(3, 0, "08:00 Костанай");
     scheduleDailyKaspiTransfer(8, 10, "13:10 Костанай");
+  } else if (transferPaused) {
+    console.log("[kaspiTransfer] расписание выключено — стоит на паузе (KASPI_TRANSFER_PAUSED=1). Ручной запуск через /api/kaspi-transfer/run работает как обычно.");
   } else {
     const missing = [];
     if (!process.env.ONEC_PASSWORD) missing.push("ONEC_PASSWORD");
