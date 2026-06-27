@@ -740,7 +740,12 @@ async function fetchNomenclatureByNameMap() {
    вручную). Если 1С откажется проводить (например, не хватает остатка товара
    на складе) — создаём тот же документ непроведённым: это ожидаемая, штатная
    ситуация, бухгалтерия проведёт вручную позже (подтверждено Александром). */
-const ORG_FIELD_CANDIDATES = ["СтруктурнаяЕдиница_Key", "Организация_Key"];
+// Подтверждено через GET /api/onec/metadata?entity=РеализацияТоваровУслуг —
+// у документа нет поля "СтруктурнаяЕдиница_Key" (его раньше пробовали первым,
+// из-за этого 1С падала с общей HTTP 500 при создании документа). Реальное
+// поле — "Организация_Key" (есть в живой метадате), "СтруктурноеПодразделение_Key"
+// оставлен запасным вариантом на случай другой конфигурации 1С.
+const ORG_FIELD_CANDIDATES = ["Организация_Key", "СтруктурноеПодразделение_Key"];
 
 function looksLikeUnknownFieldError(message) {
   const m = String(message || "").toLowerCase();
@@ -750,7 +755,11 @@ function looksLikeUnknownFieldError(message) {
     m.indexOf("не существует свойств") !== -1 ||
     m.indexOf("invalid property") !== -1 ||
     m.indexOf("unknown property") !== -1 ||
-    m.indexOf("http 400") !== -1
+    m.indexOf("http 400") !== -1 ||
+    // 1С иногда отвечает общей HTTP 500 ("внутренняя ошибка OData сервиса"),
+    // если в теле POST указано несуществующее имя поля — подстраховка, чтобы
+    // в этом случае код тоже пробовал следующее имя поля, а не сразу сдавался.
+    (m.indexOf("http 500") !== -1 && m.indexOf("внутренняя ошибка") !== -1)
   );
 }
 
@@ -765,7 +774,7 @@ async function createRealizationDocument(opts) {
       Date: dateIso,
       Комментарий: comment || "",
       Контрагент_Key: contrRef,
-      Договор_Key: dogovorRef,
+      ДоговорКонтрагента_Key: dogovorRef,
       Склад_Key: skladRef,
       Ответственный_Key: respRef,
       Posted: !!posted,
