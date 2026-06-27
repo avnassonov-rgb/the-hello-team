@@ -669,40 +669,53 @@ function norm1C(s) {
 async function resolveRefByName(candidateEntityNames, targetName, opts) {
   opts = opts || {};
   const wanted = norm1C(targetName);
-  // "Владелец_Key" запрашиваем ТОЛЬКО когда он реально нужен (ownerKeyFilter —
-  // например, поиск "Договора" внутри конкретного контрагента). У многих
-  // справочников (Организации, Контрагенты, Склады) такого поля вообще нет —
-  // запрос с ним падает с HTTP 400 ("Сегмент пути Владелец_Key не найден"),
-  // из-за чего поиск проваливался даже для правильного имени набора сущностей.
-  const selectFields = opts.selectFields || (opts.ownerKeyFilter ? "Ref_Key,Description,Владелец_Key" : "Ref_Key,Description");
+  const wantOwnerField = !!opts.ownerKeyFilter && !opts.selectFields;
   // Собираем ошибку КАЖДОГО варианта имени справочника, а не только последнего —
   // иначе при нескольких candidateEntityNames предыдущие ошибки "затираются" и
-  // не видно, что произошло на самом деле (например, первый вариант мог найти
-  // справочник, но не найти запись с таким названием — а показывалась только
-  // ошибка последнего, совсем другого варианта).
+  // не видно, что произошло на самом деле.
   const errors = [];
   for (const entityName of candidateEntityNames) {
+    let rows;
+    let ownerFieldAvailable = wantOwnerField;
     try {
-      const rows = await fetchEntitySet(entityName, {
-        select: selectFields,
+      rows = await fetchEntitySet(entityName, {
+        select: opts.selectFields || (wantOwnerField ? "Ref_Key,Description,Владелец_Key" : "Ref_Key,Description"),
         pageSize: 1000,
       });
-      const matches = rows.filter((r) => norm1C(r.Description) === wanted);
-      if (matches.length === 0) {
-        errors.push("[" + entityName + "] нет записи с названием «" + targetName + "» (всего строк: " + rows.length + ")");
+    } catch (e) {
+      // "Владелец_Key" есть не у всех справочников в этой публикации OData
+      // (например, его нет у Catalog_ДоговорыКонтрагентов) — запрос с этим
+      // полем падает целиком с HTTP 400, из-за чего поиск проваливался даже
+      // для правильного имени набора сущностей и правильного названия записи.
+      // В этом случае повторяем запрос без "Владелец_Key": отбор по названию
+      // всё равно сработает, просто без уточнения по владельцу при нескольких
+      // совпадениях с одинаковым названием.
+      if (wantOwnerField && looksLikeUnknownFieldError(e.message)) {
+        ownerFieldAvailable = false;
+        try {
+          rows = await fetchEntitySet(entityName, { select: "Ref_Key,Description", pageSize: 1000 });
+        } catch (e2) {
+          errors.push("[" + entityName + "] " + e2.message);
+          continue;
+        }
+      } else {
+        errors.push("[" + entityName + "] " + e.message);
         continue;
       }
-      let row = matches[0];
-      if (opts.ownerKeyFilter && matches.length > 1) {
-        const preferred = matches.find(
-          (r) => r.Владелец_Key && String(r.Владелец_Key).toLowerCase() === String(opts.ownerKeyFilter).toLowerCase()
-        );
-        if (preferred) row = preferred;
-      }
-      return { ref: row.Ref_Key, usedEntity: entityName, matchCount: matches.length, error: null };
-    } catch (e) {
-      errors.push("[" + entityName + "] " + e.message);
     }
+    const matches = rows.filter((r) => norm1C(r.Description) === wanted);
+    if (matches.length === 0) {
+      errors.push("[" + entityName + "] нет записи с названием «" + targetName + "» (всего строк: " + rows.length + ")");
+      continue;
+    }
+    let row = matches[0];
+    if (ownerFieldAvailable && matches.length > 1) {
+      const preferred = matches.find(
+        (r) => r.Владелец_Key && String(r.Владелец_Key).toLowerCase() === String(opts.ownerKeyFilter).toLowerCase()
+      );
+      if (preferred) row = preferred;
+    }
+    return { ref: row.Ref_Key, usedEntity: entityName, matchCount: matches.length, error: null };
   }
   return { ref: null, usedEntity: null, matchCount: 0, error: errors.join(" | ") };
 }

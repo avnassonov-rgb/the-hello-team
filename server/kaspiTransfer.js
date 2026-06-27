@@ -59,12 +59,12 @@ const SKLAD_CATALOG_CANDIDATES = ["Catalog_Склады"];
 const SKLAD_NAME = process.env.KASPI_TRANSFER_SKLAD_NAME || "Основной склад (г. Костанай)";
 
 const RESP_CATALOG_CANDIDATES = ["Catalog_Пользователи", "Catalog_ФизическиеЛица", "Catalog_Сотрудники"];
-// На скриншоте могло прочитаться как "Касли Магазин" (похоже на ошибку
-// распознавания) — пробуем сперва ожидаемое "Kaspi Магазин", затем буквально
-// то, что было на скриншоте; можно переопределить через переменную окружения.
+// Точное название подтверждено Александром: "Каспи Магазин" (кириллицей).
+// Можно переопределить через переменную окружения, если в 1С когда-нибудь
+// изменится написание.
 const RESP_NAME_CANDIDATES = process.env.KASPI_TRANSFER_RESP_NAME
   ? [process.env.KASPI_TRANSFER_RESP_NAME]
-  : ["Kaspi Магазин", "Касли Магазин"];
+  : ["Каспи Магазин"];
 
 async function resolveFixedRefs() {
   const problems = [];
