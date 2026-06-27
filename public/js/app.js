@@ -564,6 +564,47 @@
     }
   }
 
+  /* ---------------- Kaspi: безопасный тест переноса на 1 заказе ---------------- */
+  function initKaspiTest() {
+    var input = document.getElementById("kaspiTestOrderId");
+    var previewBtn = document.getElementById("kaspiTestPreviewBtn");
+    var realBtn = document.getElementById("kaspiTestRealBtn");
+    var resultBox = document.getElementById("kaspiTestResult");
+    if (!input || !previewBtn || !realBtn || !resultBox) return;
+
+    function showResult(text) {
+      resultBox.textContent = text;
+      resultBox.classList.remove("hidden");
+    }
+
+    function runTest(dryRun) {
+      var orderId = (input.value || "").trim();
+      if (!orderId) { alert("Введите код заказа Kaspi."); return; }
+      if (!dryRun && !confirm("Это создаст Реализацию в 1С и продвинет заказ №" + orderId + " в Kaspi (Упаковка → Передача). Точно продолжить?")) return;
+
+      previewBtn.disabled = true;
+      realBtn.disabled = true;
+      showResult("Выполняется, подождите…");
+
+      var url = "/api/kaspi-transfer/run?orderId=" + encodeURIComponent(orderId) + (dryRun ? "&dryRun=1" : "");
+      fetch(url, { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          previewBtn.disabled = false;
+          realBtn.disabled = false;
+          showResult(JSON.stringify(j, null, 2));
+        })
+        .catch(function () {
+          previewBtn.disabled = false;
+          realBtn.disabled = false;
+          showResult("Ошибка соединения с сервером.");
+        });
+    }
+
+    previewBtn.addEventListener("click", function () { runTest(true); });
+    realBtn.addEventListener("click", function () { runTest(false); });
+  }
+
   /* ---------------- инициализация ---------------- */
   function init() {
     initTabs();
@@ -572,6 +613,7 @@
     initControlButtons();
     initPrintButtons();
     initManagersTab();
+    initKaspiTest();
 
     fetch("/api/me").then(function (r) { return r.json(); }).then(function (me) {
       if (!me.authed) { window.location.href = "/login.html"; return; }
