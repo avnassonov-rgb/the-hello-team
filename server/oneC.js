@@ -646,8 +646,18 @@ function httpGetTextWithAuth(fullUrl, timeoutMs) {
 
 async function fetchMetadataFragment(entityTypeNameSubstring, maxLen) {
   const xml = await httpGetTextWithAuth(baseUrl() + "$metadata", 30000);
-  const re = new RegExp("<EntityType Name=\"[^\"]*" + entityTypeNameSubstring + "[^\"]*\"[\\s\\S]*?</EntityType>", "i");
-  const m = xml.match(re);
+  // Раньше искали ПОДСТРОКУ в имени EntityType — из-за этого запрос
+  // "Номенклатура" иногда находил совсем другой, более длинный тип
+  // ("Catalog_НоменклатураПрисоединенныеФайлы"), если он встретился в XML
+  // раньше нужного. Сначала пробуем ТОЧНОЕ совпадение имени (с обычными
+  // префиксами Catalog_/Document_), и только если такого нет — ищем по
+  // подстроке как раньше (запасной путь).
+  const exactRe = new RegExp("<EntityType Name=\"(?:Catalog_|Document_)?" + entityTypeNameSubstring + "\"[\\s\\S]*?</EntityType>", "i");
+  let m = xml.match(exactRe);
+  if (!m) {
+    const looseRe = new RegExp("<EntityType Name=\"[^\"]*" + entityTypeNameSubstring + "[^\"]*\"[\\s\\S]*?</EntityType>", "i");
+    m = xml.match(looseRe);
+  }
   if (!m) return { found: false, fragment: null, propertyNames: [], properties: [] };
   const fragment = m[0];
   // Раньше брали только имена свойств. Теперь дополнительно вытаскиваем
