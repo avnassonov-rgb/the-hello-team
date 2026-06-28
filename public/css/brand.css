@@ -4,13 +4,13 @@
 :root{
   --ink:#1F1F1F;
   --bar-gray:#594C51;
-  --page:#E0E0E0;
-  --card:#F5F5F5;
-  --chip:#EAEAEA;
+  --page:#F5F3ED;
+  --card:#F7F4EF;
+  --chip:#EFEBE2;
   --pink:#F4367F;
   --pink-dark:#D92E6F;
   --pink-light:#FFAECF;
-  --blue:#85D0F2;
+  --blue:#5CC8FF;
   --btn-gray:#E6E6E6;
   --outline:rgba(31,31,31,.2);
   --outline-25:rgba(31,31,31,.25);
@@ -18,10 +18,16 @@
   --radius:40px;
   --pad:30px;
   --gap:25px;
+  --shadow-soft:20px 20px 50px rgba(0,0,0,.04);
+  --shadow-card:0 14px 32px rgba(31,31,31,.06);
+  --side-w:115px;
+  --side-w-open:300px;
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{
+  display:flex;
+  align-items:flex-start;
   font-family:'Montserrat',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   background:var(--page);
   color:var(--ink);
@@ -32,8 +38,58 @@ body{
 a{color:inherit;}
 button{font-family:inherit;}
 .icon{width:1em;height:1em;display:inline-block;vertical-align:-0.14em;fill:currentColor;flex:none;}
-.wrap{max-width:1980px;margin:0 auto;padding:17px 60px 60px;}
+.wrap{flex:1;min-width:0;max-width:1980px;margin:0 auto;padding:17px 60px 60px;}
 .hidden{display:none !important;}
+
+/* ---------- боковое меню ---------- */
+.sidenav{
+  position:sticky;top:20px;align-self:flex-start;flex:none;
+  width:var(--side-w);height:calc(100vh - 40px);min-height:560px;
+  margin:20px 0 20px 20px;background:#fff;border-radius:100px;
+  box-shadow:var(--shadow-soft);transition:width .2s ease,border-radius .2s ease;
+  overflow:hidden;z-index:20;
+}
+.sidenav.open{width:var(--side-w-open);border-radius:50px;}
+.sidenav-inner{display:flex;flex-direction:column;align-items:center;height:100%;padding:26px 0 20px;}
+.sidenav.open .sidenav-inner{align-items:stretch;padding:26px 22px 22px;}
+.sidenav-logo{width:54px;height:54px;min-width:54px;border-radius:50%;object-fit:cover;flex:none;margin-bottom:30px;display:block;}
+.sidenav.open .sidenav-logo{margin-left:6px;}
+.sidenav .tabbar{
+  display:flex;flex-direction:column;gap:14px;width:100%;flex:1;
+  background:none;height:auto;padding:0;border-radius:0;
+}
+.sidenav .tab{
+  display:flex;align-items:center;gap:14px;justify-content:center;
+  width:100%;height:48px;border:none;background:transparent;color:var(--ink);
+  border-radius:16px;cursor:pointer;font-family:'Montserrat',sans-serif;font-weight:600;font-size:14px;
+  flex:none;white-space:nowrap;overflow:hidden;
+}
+.sidenav.open .tab{justify-content:flex-start;padding:0 14px;}
+.sidenav .tab .tab-ico{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;}
+.sidenav .tab .tab-ico svg{width:100%;height:100%;}
+.sidenav .tab .tab-lbl{display:none;}
+.sidenav.open .tab .tab-lbl{display:inline;overflow:hidden;text-overflow:ellipsis;}
+.sidenav .tab.active{background:var(--ink);color:#fff;}
+.sidenav .tab:not(.active):hover{background:rgba(31,31,31,.08);}
+.side-toggle{
+  margin-top:auto;width:48px;height:48px;border:none;background:transparent;flex:none;
+  display:flex;align-items:center;justify-content:center;color:var(--ink);opacity:.5;
+  cursor:pointer;border-radius:50%;
+}
+.sidenav.open .side-toggle{align-self:flex-start;margin-left:8px;}
+.side-toggle:hover{opacity:1;background:rgba(31,31,31,.06);}
+.side-toggle svg{width:26px;height:18px;}
+
+/* ---------- подвал ---------- */
+.appfooter{
+  margin-top:var(--gap);background:var(--pink);border-radius:50px;
+  padding:38px 30px;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 20px 50px rgba(244,54,127,.18);
+}
+.appfooter-text{
+  font-family:'Montserrat',sans-serif;font-weight:800;color:#fff;
+  font-size:46px;letter-spacing:-1px;text-align:center;line-height:1;white-space:nowrap;
+}
 
 /* ---------- базовая карточка ---------- */
 .card{background:var(--card);border-radius:var(--radius);padding:var(--pad);}
@@ -55,27 +111,12 @@ button{font-family:inherit;}
   flex-wrap:wrap;gap:16px;background:transparent;
   padding:10px 0;margin-bottom:18px;min-height:70px;
 }
-.toprow .tr-left{display:flex;align-items:center;gap:5px;flex:none;}
-.toprow .tr-center{flex:1;display:flex;align-items:center;justify-content:center;min-width:160px;}
+.toprow .tr-left{display:flex;align-items:center;gap:16px;flex:1;min-width:160px;}
 .toprow .tr-right{display:flex;flex-direction:column;align-items:flex-end;flex:none;}
 .toprow .files{display:flex;gap:5px;flex-wrap:wrap;}
 
 .logo-mark{width:70px;height:70px;min-width:70px;border-radius:50%;flex:none;display:block;object-fit:cover;}
-.wordmark-img{height:180px;width:auto;display:block;}
-
-.tabbar{
-  width:680px;max-width:100%;height:70px;border-radius:35px;background:var(--chip);
-  display:flex;align-items:center;padding:5px;flex:none;
-}
-.tabbar .tab{
-  flex:1;height:100%;border:none;background:transparent;color:var(--ink);
-  font-family:'Montserrat',sans-serif;font-weight:600;font-size:13px;
-  border-radius:30px;cursor:pointer;transition:background .15s,color .15s;
-  display:flex;align-items:center;justify-content:center;white-space:nowrap;
-}
-.tabbar .tab.active{background:var(--ink);color:var(--card);}
-.tabbar .tab.disabled{color:rgba(31,31,31,.4);cursor:not-allowed;}
-.tabbar .tab:not(.active):not(.disabled):hover{background:rgba(31,31,31,.08);}
+.wordmark-img{height:120px;width:auto;display:block;}
 
 .filepill{
   width:269px;height:70px;border-radius:18px;background:var(--chip);
@@ -134,7 +175,7 @@ button{font-family:inherit;}
 .plan-head .sub{font-size:16px;color:rgba(31,31,31,.75);font-weight:400;}
 
 .plan-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:17px;}
-.groupcard{display:flex;flex-direction:column;background:#FFFFFF;border-radius:24px;padding:24px;box-shadow:0 1px 3px rgba(31,31,31,.08);}
+.groupcard{display:flex;flex-direction:column;background:#FFFFFF;border-radius:24px;padding:24px;box-shadow:var(--shadow-card);}
 .groupcard .gh{display:flex;align-items:center;gap:16px;margin-bottom:18px;flex-wrap:wrap;}
 .groupcard table{width:100%;border-collapse:collapse;}
 .groupcard thead th{
@@ -181,7 +222,7 @@ button{font-family:inherit;}
 .mgr-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:20px;}
 .mgr-card{
   background:#fff;border-radius:24px;padding:22px 24px;
-  box-shadow:0 1px 3px rgba(31,31,31,.08);display:flex;flex-direction:column;gap:16px;
+  box-shadow:var(--shadow-card);display:flex;flex-direction:column;gap:16px;
 }
 .mgr-card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:12px;}
 .mgr-card-name{font-size:17px;font-weight:700;color:var(--ink);display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
@@ -314,14 +355,27 @@ details.panel[open]>summary::before{transform:rotate(90deg);}
   .plan-grid{grid-template-columns:repeat(2,1fr);}
   .cat-grid{grid-template-columns:repeat(2,1fr);}
 }
+@media (max-width:899px){
+  body{flex-direction:column;}
+  .sidenav{
+    position:relative;top:0;align-self:stretch;width:auto !important;height:auto;
+    margin:14px;border-radius:30px;
+  }
+  .sidenav-inner{flex-direction:row;align-items:center;padding:10px 16px;gap:14px;}
+  .sidenav.open .sidenav-inner{align-items:center;}
+  .sidenav-logo{margin-bottom:0;width:42px;height:42px;min-width:42px;}
+  .sidenav .tabbar{flex-direction:row;gap:8px;flex-wrap:wrap;}
+  .sidenav .tab{width:44px;height:44px;border-radius:12px;flex:none;}
+  .sidenav.open .tab{width:auto;}
+  .sidenav .tab .tab-lbl{display:none;}
+  .sidenav.open .tab .tab-lbl{display:inline;font-size:12px;}
+  .side-toggle{margin-top:0;margin-left:auto;}
+  .sidenav.open .side-toggle{margin-left:auto;align-self:center;}
+}
 @media (max-width:699px){
   .wrap{padding:16px 16px 40px;}
   .toprow{flex-direction:column;align-items:stretch;padding:16px;}
   .toprow .tr-left{flex-direction:column;align-items:stretch;gap:10px;width:100%;}
-  .toprow .tr-left .logo-mark{align-self:center;}
-  .tabbar{width:100%;height:54px;}
-  .tabbar .tab{font-size:13px;}
-  .toprow .tr-center{order:-1;padding:6px 0;}
   .wordmark-img{height:42px;}
   .toprow .tr-right{align-items:stretch;width:100%;}
   .toprow .files{flex-direction:column;width:100%;}
@@ -338,4 +392,6 @@ details.panel[open]>summary::before{transform:rotate(90deg);}
   .plan-grid{grid-template-columns:1fr;}
   .cat-grid{grid-template-columns:1fr;}
   .card{padding:20px;}
+  .appfooter{padding:24px 16px;border-radius:28px;}
+  .appfooter-text{font-size:24px;}
 }
