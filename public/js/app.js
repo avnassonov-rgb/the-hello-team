@@ -39,6 +39,18 @@
     });
   }
 
+  /* ---------------- боковое меню (раскрыть/свернуть) ---------------- */
+  function initSideToggle() {
+    var btn = document.getElementById("sideToggleBtn");
+    var nav = document.getElementById("sidenav");
+    if (!btn || !nav) return;
+    if (localStorage.getItem("sidenavOpen") === "1") nav.classList.add("open");
+    btn.addEventListener("click", function () {
+      nav.classList.toggle("open");
+      localStorage.setItem("sidenavOpen", nav.classList.contains("open") ? "1" : "0");
+    });
+  }
+
   /* ---------------- выход ---------------- */
   function initLogout() {
     var btn = document.getElementById("logoutBtn");
@@ -608,6 +620,7 @@
   /* ---------------- инициализация ---------------- */
   function init() {
     initTabs();
+    initSideToggle();
     initLogout();
     initSync();
     initControlButtons();
