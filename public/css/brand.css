@@ -308,6 +308,27 @@ details.panel[open]>summary::before{transform:rotate(90deg);}
 .chead{display:flex;gap:8px;margin-bottom:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:rgba(31,31,31,.5);font-weight:700;}
 .chead .h1{flex:1;} .chead .h2{width:96px;} .chead .h3{width:32px;}
 
+/* ---------- вкладка «Сотрудники» ---------- */
+.emp-list{display:flex;flex-direction:column;gap:14px;}
+.emp-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 20px;}
+.emp-card.emp-card-editing{border-color:var(--pink);box-shadow:0 0 0 2px rgba(244,54,127,.12);}
+.emp-card-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:rgba(31,31,31,.5);margin-bottom:12px;}
+.emp-row-view{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+.emp-row-main{flex:1;min-width:220px;}
+.emp-name{font-size:16px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.emp-status{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:3px 10px;border-radius:999px;}
+.emp-status.active{background:#E3F3E5;color:#2e7d32;}
+.emp-status.inactive{background:rgba(31,31,31,.08);color:rgba(31,31,31,.5);}
+.emp-meta{display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:12.5px;color:rgba(31,31,31,.6);}
+.emp-roles{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;}
+.role-chip{background:var(--pink-light);color:var(--pink-dark);font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:999px;}
+.role-chip.role-chip-empty{background:rgba(31,31,31,.06);color:rgba(31,31,31,.45);}
+.emp-row-actions{display:flex;gap:8px;flex:none;}
+.emp-form{padding-top:4px;}
+.emp-role-checks{display:flex;flex-wrap:wrap;gap:10px 18px;}
+.emp-role-check{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;}
+.emp-role-check input{width:16px;height:16px;cursor:pointer;}
+
 .empty-state{background:var(--card);border:1.5px dashed rgba(31,31,31,.18);border-radius:var(--radius);padding:46px 28px;text-align:center;color:rgba(31,31,31,.55);}
 .empty-state h3{margin:0 0 6px;color:var(--ink);font-size:17px;}
 .empty-state p{margin:0 auto;max-width:480px;font-size:13.5px;}
