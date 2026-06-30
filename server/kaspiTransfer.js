@@ -161,6 +161,37 @@ async function loadOrderLines(orderId) {
 // priceMap/nameToCode, например новый товар) — для ЭТОГО набора используется
 // старое поведение (деление поровну), чтобы перенос заказа не остановился;
 // причина попадает в priceBreakdown[].fallbackReason для проверки на dry-run.
+
+// Цена в документе 1С должна быть целым числом тенге (без копеек) — простое
+// округление каждой доли по отдельности (Math.round) почти всегда даёт сумму
+// строк НЕ равную фактической цене набора (теряется/добавляется 1-2 тенге
+// из-за округления нескольких чисел одновременно). Метод "наибольшего
+// остатка": округляем все значения вниз, а разницу между целевой суммой и
+// суммой округлённых вниз раздаём по 1 тенге компонентам с наибольшей
+// дробной частью — так сумма строк документа ВСЕГДА точно равна целевой
+// сумме (округлённой фактической цене набора/товара).
+function roundToIntegerSum(rawValues, target) {
+  const targetInt = Math.round(target);
+  const floors = rawValues.map(function (v) { return Math.floor(v); });
+  let remainder = targetInt - floors.reduce(function (s, v) { return s + v; }, 0);
+  const order = rawValues
+    .map(function (v, i) { return { i: i, frac: v - floors[i] }; })
+    .sort(function (a, b) { return b.frac - a.frac; });
+  const result = floors.slice();
+  for (let k = 0; k < order.length && remainder > 0; k++) {
+    result[order[k].i] += 1;
+    remainder--;
+  }
+  // remainder < 0 практически не должно случаться (targetInt — округление
+  // того же target, от которого считались rawValues), но на всякий случай
+  // отнимаем по 1 тенге у компонентов с наименьшей дробной частью.
+  for (let k = order.length - 1; k >= 0 && remainder < 0; k--) {
+    result[order[k].i] -= 1;
+    remainder++;
+  }
+  return result;
+}
+
 function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, nameToCode) {
   const docLines = [];
   const priceBreakdown = []; // только по наборам (>1 компонент) — для dry-run/диагностики
@@ -201,19 +232,27 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, 
       }
     }
 
+    // "Сырые" (дробные) цены компонентов — по реальным долям или поровну —
+    // и их округление до целых тенге с точным сохранением суммы (см.
+    // roundToIntegerSum выше). Цель округления — ol.unitPrice (фактическая
+    // цена ЭТОЙ позиции заказа), а не каталожная/раздельная цена.
+    const rawPrices = entry.components.map((comp) =>
+      shares && shares.has(comp) ? ol.unitPrice * shares.get(comp).share : ol.unitPrice / componentCount
+    );
+    const roundedPrices = roundToIntegerSum(rawPrices, ol.unitPrice);
+
     let anyMissing = false;
     // nomByName хранит {ref, unitKey} на товар (см. fetchNomenclatureByNameMap
     // в oneC.js) — unitKey нужен в строке документа, иначе 1С падает с общей
     // HTTP 500 при создании документа (нет единицы измерения).
-    const lines = entry.components.map((comp) => {
+    const lines = entry.components.map((comp, idx) => {
       const nom = nomByName.get(norm(comp.name1C));
       if (!nom || !nom.ref) anyMissing = true;
-      const price = shares && shares.has(comp) ? ol.unitPrice * shares.get(comp).share : ol.unitPrice / componentCount;
       return {
         nomKey: nom ? nom.ref : null,
         unitKey: nom ? nom.unitKey : null,
         qty: comp.qty * ol.qty,
-        price,
+        price: roundedPrices[idx],
         compName: comp.name1C,
       };
     });
@@ -224,11 +263,11 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, 
         kitUnitPrice: ol.unitPrice,
         usedProportionalSplit: !!shares,
         fallbackReason,
-        components: entry.components.map((comp) => ({
+        components: entry.components.map((comp, idx) => ({
           name: comp.name1C,
           refPrice: shares && shares.has(comp) ? shares.get(comp).refPrice : null,
           share: shares && shares.has(comp) ? shares.get(comp).share : null,
-          computedPrice: shares && shares.has(comp) ? ol.unitPrice * shares.get(comp).share : ol.unitPrice / componentCount,
+          computedPrice: roundedPrices[idx],
         })),
       });
     }
