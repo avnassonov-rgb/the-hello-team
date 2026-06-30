@@ -304,6 +304,71 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, 
 // коробок (например, если вместимость у компонентов в таблице соответствия
 // разная — каждая отдельная вместимость это отдельная группа, они НЕ
 // объединяются между собой, даже если это компоненты одного набора).
+// Накладная: после ASSEMBLE Kaspi формирует её не всегда мгновенно — по словам
+// Александра иногда это занимает 2-3, а то и 5 минут. Раньше код ждал её
+// синхронно прямо внутри запроса переноса (4 попытки по 3 сек = ~9 сек
+// суммарно) — этого было мало, и реальные "просто не успела сформироваться"
+// случаи попадали в waybillFailed как ошибка, хотя ошибки никакой не было.
+// Теперь это отдельная фоновая задача: запускается без ожидания (не блокирует
+// ни тест-кнопку на дашборде, ни автоматический запуск по расписанию), сама
+// ждёт до ~6.5 минут (13 попыток по 30 сек) и отправляет накладную в Telegram,
+// когда она появится — без участия пользователя. Перенос и продвижение
+// заказа в Kaspi уже считаются успешными независимо от результата этой задачи;
+// если совсем не получится — видно в логах сервера, накладную всегда можно
+// скачать вручную в кабинете Kaspi.
+async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
+  const MAX_ATTEMPTS = 13;
+  const DELAY_MS = 30000;
+  let waybillUrl = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS && !waybillUrl; attempt++) {
+    if (attempt > 0) await sleep(DELAY_MS);
+    try {
+      const raw = await kaspi.getOrderRawByCode(orderCode);
+      waybillUrl = raw.found && raw.attributes && raw.attributes.kaspiDelivery && raw.attributes.kaspiDelivery.waybill;
+    } catch (e) {
+      // временная ошибка сети/API — просто пробуем ещё раз на следующей попытке
+    }
+  }
+  if (!waybillUrl) {
+    console.error(
+      "[kaspiTransfer] заказ №" + orderCode + ": накладная не появилась в Kaspi за " + MAX_ATTEMPTS +
+      " попыток (~" + Math.round((MAX_ATTEMPTS * DELAY_MS) / 60000) + " мин) — нужно скачать вручную в кабинете Kaspi"
+    );
+    return;
+  }
+  try {
+    const pdf = await kaspi.downloadWaybillPdf(waybillUrl);
+    // Ищем ВСЕХ сотрудников в роли "Зав.складом" в базе сотрудников
+    // (вкладка «Сотрудники» на дашборде) — если они привязаны (написали
+    // боту, админ вставил их Telegram ID), накладная уходит каждому из
+    // них, без необходимости менять переменные окружения на Render.
+    // Если таких сотрудников пока нет — остаётся старое поведение из
+    // telegram.js (TELEGRAM_WAREHOUSE_CHAT_ID, иначе TELEGRAM_CHAT_ID).
+    const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
+    const caption = "Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
+    let sendResults;
+    if (warehouseChatIds.length) {
+      sendResults = await Promise.all(
+        warehouseChatIds.map(function (chatId) {
+          return telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption, { chatId: chatId });
+        })
+      );
+    } else {
+      sendResults = [await telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption)];
+    }
+    const failedSends = sendResults.filter((r) => !r.ok);
+    if (failedSends.length) {
+      console.error(
+        "[kaspiTransfer] заказ №" + orderCode + ": накладная скачана, но отправлена не всем получателям (" +
+        failedSends.length + " из " + sendResults.length + " не удалось) — " +
+        failedSends.map((r) => r.error).join("; ")
+      );
+    }
+  } catch (e) {
+    console.error("[kaspiTransfer] заказ №" + orderCode + ": не удалось скачать/отправить накладную — " + e.message);
+  }
+}
+
 function computeNumberOfSpace(orderLines, mappingMap, detailed) {
   const FALLBACK_CAPACITY = 4;
   const byCapacity = new Map(); // вместимость -> сумма количества
@@ -407,7 +472,11 @@ async function runKaspiTransfer(options) {
   let skippedAlready = onlyOrderCode ? 0 : candidateOrders.length - newOrders.length;
   const unresolvedOrders = []; // заказы, которые не удалось перенести — НЕ отмечаются обработанными, будут повторены
   const assembleFailed = []; // 1С документ создан, но Kaspi не подтвердил продвижение — отмечены обработанными, проблема только в Kaspi
-  const waybillFailed = []; // продвижение в Kaspi прошло, но накладную не удалось скачать/отправить в Telegram — не критично, накладная всё равно доступна в кабинете Kaspi вручную
+  // Накладные теперь отправляются фоновой задачей (fetchAndSendWaybillInBackground)
+  // и не блокируют этот запрос — этот массив оставлен для совместимости со
+  // старым форматом ответа, но обычно остаётся пустым; реальные проблемы с
+  // накладной видны в логах сервера, а не здесь.
+  const waybillFailed = [];
   const processedThisRun = [];
   const dryRunPreview = []; // только при dryRun: что было бы создано, без записи куда-либо
 
@@ -481,52 +550,14 @@ async function runKaspiTransfer(options) {
       assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка→Передача) — " + e.message);
     }
 
-    // Накладная: после ASSEMBLE Kaspi формирует её не всегда мгновенно —
-    // пробуем несколько раз с паузой. Это дополнительный, не критичный шаг:
-    // если не получится, перенос и продвижение заказа УЖЕ сделаны успешно,
-    // накладную всегда можно скачать вручную в кабинете Kaspi.
+    // Накладная формируется в Kaspi не мгновенно (бывает до 5 минут) —
+    // запускаем ожидание/отправку в фоне, не блокируя ответ переноса (см.
+    // fetchAndSendWaybillInBackground выше). Перенос и продвижение заказа
+    // уже считаются успешными; накладная придёт в Telegram отдельно.
     if (assembled) {
-      try {
-        let waybillUrl = null;
-        for (let attempt = 0; attempt < 4 && !waybillUrl; attempt++) {
-          if (attempt > 0) await sleep(3000);
-          const raw = await kaspi.getOrderRawByCode(orderCode);
-          waybillUrl = raw.found && raw.attributes && raw.attributes.kaspiDelivery && raw.attributes.kaspiDelivery.waybill;
-        }
-        if (waybillUrl) {
-          const pdf = await kaspi.downloadWaybillPdf(waybillUrl);
-          // Ищем ВСЕХ сотрудников в роли "Зав.складом" в базе сотрудников
-          // (вкладка «Сотрудники» на дашборде) — если они привязаны (написали
-          // боту, админ вставил их Telegram ID), накладная уходит каждому из
-          // них, без необходимости менять переменные окружения на Render.
-          // Если таких сотрудников пока нет — остаётся старое поведение из
-          // telegram.js (TELEGRAM_WAREHOUSE_CHAT_ID, иначе TELEGRAM_CHAT_ID).
-          const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
-          const caption = "Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
-          let sendResults;
-          if (warehouseChatIds.length) {
-            sendResults = await Promise.all(
-              warehouseChatIds.map(function (chatId) {
-                return telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption, { chatId: chatId });
-              })
-            );
-          } else {
-            sendResults = [await telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption)];
-          }
-          const failedSends = sendResults.filter((r) => !r.ok);
-          if (failedSends.length) {
-            waybillFailed.push(
-              "заказ №" + orderCode + ": накладная скачана, но отправлена не всем получателям (" +
-              failedSends.length + " из " + sendResults.length + " не удалось) — " +
-              failedSends.map((r) => r.error).join("; ")
-            );
-          }
-        } else {
-          waybillFailed.push("заказ №" + orderCode + ": накладная не появилась в Kaspi за несколько попыток (попробуйте позже вручную)");
-        }
-      } catch (e) {
-        waybillFailed.push("заказ №" + orderCode + ": не удалось скачать/отправить накладную — " + e.message);
-      }
+      fetchAndSendWaybillInBackground(orderCode, numberOfSpace).catch((e) =>
+        console.error("[kaspiTransfer] фоновая отправка накладной для заказа №" + orderCode + " упала: " + e.message)
+      );
     }
   }
 
