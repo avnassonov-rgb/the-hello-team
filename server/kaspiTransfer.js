@@ -314,8 +314,9 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, 
 // ждёт до ~6.5 минут (13 попыток по 30 сек) и отправляет накладную в Telegram,
 // когда она появится — без участия пользователя. Перенос и продвижение
 // заказа в Kaspi уже считаются успешными независимо от результата этой задачи;
-// если совсем не получится — видно в логах сервера, накладную всегда можно
-// скачать вручную в кабинете Kaspi.
+// если совсем не получится — теперь приходит предупреждение в Telegram (см.
+// ниже), а не только в логи сервера, которые пользователь не читает; накладную
+// всегда можно скачать вручную в кабинете Kaspi.
 async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
   const MAX_ATTEMPTS = 13;
   const DELAY_MS = 30000;
@@ -330,42 +331,60 @@ async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
     }
   }
   if (!waybillUrl) {
-    console.error(
-      "[kaspiTransfer] заказ №" + orderCode + ": накладная не появилась в Kaspi за " + MAX_ATTEMPTS +
-      " попыток (~" + Math.round((MAX_ATTEMPTS * DELAY_MS) / 60000) + " мин) — нужно скачать вручную в кабинете Kaspi"
-    );
+    const msg = "⚠️ Заказ №" + orderCode + ": накладная не появилась в Kaspi за " +
+      Math.round((MAX_ATTEMPTS * DELAY_MS) / 60000) + " мин. Скачайте её вручную в кабинете Kaspi.";
+    console.error("[kaspiTransfer] " + msg);
+    await telegram.send(msg); // видно в чате уведомлений, не только в логах сервера
     return;
   }
+
+  let pdf;
   try {
-    const pdf = await kaspi.downloadWaybillPdf(waybillUrl);
-    // Ищем ВСЕХ сотрудников в роли "Зав.складом" в базе сотрудников
-    // (вкладка «Сотрудники» на дашборде) — если они привязаны (написали
-    // боту, админ вставил их Telegram ID), накладная уходит каждому из
-    // них, без необходимости менять переменные окружения на Render.
-    // Если таких сотрудников пока нет — остаётся старое поведение из
-    // telegram.js (TELEGRAM_WAREHOUSE_CHAT_ID, иначе TELEGRAM_CHAT_ID).
-    const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
-    const caption = "Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
-    let sendResults;
-    if (warehouseChatIds.length) {
-      sendResults = await Promise.all(
-        warehouseChatIds.map(function (chatId) {
-          return telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption, { chatId: chatId });
-        })
-      );
-    } else {
-      sendResults = [await telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption)];
-    }
-    const failedSends = sendResults.filter((r) => !r.ok);
-    if (failedSends.length) {
-      console.error(
-        "[kaspiTransfer] заказ №" + orderCode + ": накладная скачана, но отправлена не всем получателям (" +
-        failedSends.length + " из " + sendResults.length + " не удалось) — " +
-        failedSends.map((r) => r.error).join("; ")
-      );
-    }
+    pdf = await kaspi.downloadWaybillPdf(waybillUrl);
   } catch (e) {
-    console.error("[kaspiTransfer] заказ №" + orderCode + ": не удалось скачать/отправить накладную — " + e.message);
+    const msg = "⚠️ Заказ №" + orderCode + ": накладная найдена в Kaspi, но не скачалась (" + e.message + "). Скачайте вручную в кабинете Kaspi.";
+    console.error("[kaspiTransfer] " + msg);
+    await telegram.send(msg);
+    return;
+  }
+
+  // Ищем ВСЕХ сотрудников в роли "Зав.складом" в базе сотрудников
+  // (вкладка «Сотрудники» на дашборде) — если они привязаны (написали
+  // боту, админ вставил их Telegram ID), накладная уходит каждому из
+  // них, без необходимости менять переменные окружения на Render.
+  // Если таких сотрудников пока нет — остаётся старое поведение из
+  // telegram.js (TELEGRAM_WAREHOUSE_CHAT_ID, иначе TELEGRAM_CHAT_ID).
+  const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
+  const caption = "Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
+  let sendResults;
+  if (warehouseChatIds.length) {
+    sendResults = await Promise.all(
+      warehouseChatIds.map(function (chatId) {
+        return telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption, { chatId: chatId });
+      })
+    );
+  } else {
+    sendResults = [await telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption)];
+  }
+  const failedSends = sendResults.filter((r) => !r.ok);
+  if (failedSends.length) {
+    console.error(
+      "[kaspiTransfer] заказ №" + orderCode + ": накладная скачана, но отправлена не всем получателям (" +
+      failedSends.length + " из " + sendResults.length + " не удалось) — " +
+      failedSends.map((r) => r.error).join("; ")
+    );
+  }
+  if (failedSends.length === sendResults.length) {
+    // Ни одна попытка отправки документа не удалась (например, не настроен
+    // ни один Telegram-получатель, или у всех получателей сбой) — это
+    // самый опасный случай: раньше он был виден ТОЛЬКО в логах сервера,
+    // которые пользователь не читает. Шлём хотя бы текстовое предупреждение
+    // в основной чат уведомлений, чтобы проблема не осталась незамеченной.
+    await telegram.send(
+      "⚠️ Заказ №" + orderCode + ": накладная скачана из Kaspi, но НЕ доставлена в Telegram (" +
+      ((failedSends[0] && failedSends[0].error) || "неизвестная ошибка") +
+      "). Скачайте вручную в кабинете Kaspi."
+    );
   }
 }
 
@@ -461,10 +480,20 @@ async function runKaspiTransfer(options) {
     }
   }
 
+  // Раньше для явного теста ОДНОГО заказа (onlyOrderCode) проверка "уже
+  // обработан" игнорировалась ВСЕГДА — это было нужно, чтобы можно было
+  // посмотреть dry-run предпросмотр даже для уже перенесённого заказа. Но
+  // та же логика разрешала и РЕАЛЬНЫЙ повторный перенос уже обработанного
+  // заказа — из-за этого 30.06.2026 случайный повторный клик по кнопке
+  // "перенести" создал вторую Реализацию в 1С на тот же заказ №981143381
+  // (см. project_kaspi_duplicate_realization_fix). Теперь "уже обработан"
+  // игнорируется ТОЛЬКО для dry-run (ничего не пишет, безопасно смотреть
+  // повторно) — для реального переноса защита от повтора всегда работает,
+  // даже если задан конкретный orderId.
   const newOrders = candidateOrders.filter((o) => {
     const attrs = o.attributes || {};
     if (wantedStatus && attrs.status !== wantedStatus) return false;
-    if (onlyOrderCode) return true; // явный тест одного заказа — игнорируем "уже обработан"
+    if (onlyOrderCode && dryRun) return true;
     return !store.isKaspiOrderProcessed(o.id);
   });
 
@@ -481,10 +510,18 @@ async function runKaspiTransfer(options) {
   const dryRunPreview = []; // только при dryRun: что было бы создано, без записи куда-либо
 
   if (onlyOrderCode && newOrders.length === 0) {
-    unresolvedOrders.push(
-      "заказ «" + onlyOrderCode + "» не найден среди заказов в статусе(ах) " + states.join("/") +
-      " со статусом " + wantedStatus + " — проверьте код/id заказа и что он ещё не продвинут дальше Упаковки"
-    );
+    const wasAlreadyProcessed = !dryRun && candidateOrders.some((o) => store.isKaspiOrderProcessed(o.id));
+    if (wasAlreadyProcessed) {
+      unresolvedOrders.push(
+        "заказ «" + onlyOrderCode + "» уже был перенесён в 1С ранее — повторный перенос пропущен (защита от " +
+        "задвоения Реализации). Если нужно перенести его снова намеренно, сообщите разработчику."
+      );
+    } else {
+      unresolvedOrders.push(
+        "заказ «" + onlyOrderCode + "» не найден среди заказов в статусе(ах) " + states.join("/") +
+        " со статусом " + wantedStatus + " — проверьте код/id заказа и что он ещё не продвинут дальше Упаковки"
+      );
+    }
   }
 
   for (const order of newOrders) {
@@ -583,12 +620,27 @@ async function runKaspiTransfer(options) {
   return { summary, errorText: errorParts.length > 0 ? errorParts.join(" || ") : null };
 }
 
+// Защита от двойного клика/двух почти одновременных запросов: пока один
+// перенос выполняется, второй вызов runKaspiTransferSafe (хоть с дашборда,
+// хоть от планировщика) сразу отказывает, а не выполняется параллельно.
+// Без этого два запроса могли успеть оба пройти проверку "уже обработан" до
+// того, как первый из них успеет её записать, и оба создать Реализацию на
+// один и тот же заказ — ровно так задвоился заказ №981143381 30.06.2026.
+let transferInProgress = false;
+
 // options.orderId/options.dryRun — см. runKaspiTransfer(). Тестовые запуски
 // (с orderId и/или dryRun) НЕ трогают lastRun-статус мониторинга и НЕ шлют
 // Telegram-уведомление — чтобы тест на 1 заказе не сбивал боевой мониторинг.
 async function runKaspiTransferSafe(options) {
   const opts = options || {};
   const isTest = !!(opts.orderId || opts.dryRun);
+
+  if (transferInProgress) {
+    const busyMsg = "Перенос уже выполняется — подождите, пока текущий запуск закончится (обычно несколько секунд), и попробуйте снова. Это защита от случайного двойного переноса одного заказа.";
+    console.log("[kaspiTransfer] " + (isTest ? "[тест] " : "") + "отказ — уже выполняется другой перенос");
+    return { ok: false, error: busyMsg, busy: true };
+  }
+  transferInProgress = true;
   try {
     const { summary, errorText } = await runKaspiTransfer(opts);
     console.log(
@@ -623,6 +675,8 @@ async function runKaspiTransferSafe(options) {
         .catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
     }
     return { ok: false, error: e.message };
+  } finally {
+    transferInProgress = false;
   }
 }
 
