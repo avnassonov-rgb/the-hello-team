@@ -357,21 +357,26 @@ async function runKaspiTransfer(options) {
         }
         if (waybillUrl) {
           const pdf = await kaspi.downloadWaybillPdf(waybillUrl);
-          // Сначала ищем, кто сейчас в роли "Зав.складом" в базе сотрудников
-          // (вкладка «Сотрудники» на дашборде) — если он привязан (написал
-          // боту, админ вставил его Telegram ID), накладная идёт ему сразу,
-          // без необходимости менять переменные окружения на Render. Если
-          // такого сотрудника пока нет — остаётся старое поведение из
+          // Ищем ВСЕХ сотрудников в роли "Зав.складом" в базе сотрудников
+          // (вкладка «Сотрудники» на дашборде) — если они привязаны (написали
+          // боту, админ вставил их Telegram ID), накладная уходит каждому из
+          // них, без необходимости менять переменные окружения на Render.
+          // Если таких сотрудников пока нет — остаётся старое поведение из
           // telegram.js (TELEGRAM_WAREHOUSE_CHAT_ID, иначе TELEGRAM_CHAT_ID).
           const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
-          const sendResult = await telegram.sendDocument(
-            pdf.buffer,
-            "Накладная_" + orderCode + ".pdf",
-            "📦 Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace,
-            warehouseChatIds.length ? { chatId: warehouseChatIds[0] } : undefined
-          );
-          if (!sendResult.ok) {
-            waybillFailed.push("заказ №" + orderCode + ": накладная скачана, но не отправлена в Telegram — " + sendResult.error);
+          const caption = "📦 Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
+          const sendResults = warehouseChatIds.length
+            ? await Promise.all(warehouseChatIds.map((chatId) =>
+                telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption, { chatId })
+              ))
+            : [await telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption)];
+          const failedSends = sendResults.filter((r) => !r.ok);
+          if (failedSends.length) {
+            waybillFailed.push(
+              "заказ №" + orderCode + ": накладная скачана, но отправлена не всем получателям (" +
+              failedSends.length + " из " + sendResults.length + " не удалось) — " +
+              failedSends.map((r) => r.error).join("; ")
+            );
           }
         } else {
           waybillFailed.push("заказ №" + orderCode + ": накладная не появилась в Kaspi за несколько попыток (попробуйте позже вручную)");
