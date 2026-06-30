@@ -35,6 +35,10 @@ function norm(s) {
   return String(s || "").trim().toLowerCase();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function statesFromEnv() {
   // Подтверждено живым тестом: у этого магазина почти все заказы (100+) идут
   // через доставку самого Kaspi ("KASPI_DELIVERY") — без неё в списке
@@ -269,6 +273,7 @@ async function runKaspiTransfer(options) {
   let skippedAlready = onlyOrderCode ? 0 : candidateOrders.length - newOrders.length;
   const unresolvedOrders = []; // заказы, которые не удалось перенести — НЕ отмечаются обработанными, будут повторены
   const assembleFailed = []; // 1С документ создан, но Kaspi не подтвердил продвижение — отмечены обработанными, проблема только в Kaspi
+  const waybillFailed = []; // продвижение в Kaspi прошло, но накладную не удалось скачать/отправить в Telegram — не критично, накладная всё равно доступна в кабинете Kaspi вручную
   const processedThisRun = [];
   const dryRunPreview = []; // только при dryRun: что было бы создано, без записи куда-либо
 
@@ -330,10 +335,50 @@ async function runKaspiTransfer(options) {
     created++;
     processedThisRun.push(order.id);
 
+    let assembled = false;
     try {
       await kaspi.assembleOrder(order.id, numberOfSpace);
+      assembled = true;
     } catch (e) {
       assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка→Передача) — " + e.message);
+    }
+
+    // Накладная: после ASSEMBLE Kaspi формирует её не всегда мгновенно —
+    // пробуем несколько раз с паузой. Это дополнительный, не критичный шаг:
+    // если не получится, перенос и продвижение заказа УЖЕ сделаны успешно,
+    // накладную всегда можно скачать вручную в кабинете Kaspi.
+    if (assembled) {
+      try {
+        let waybillUrl = null;
+        for (let attempt = 0; attempt < 4 && !waybillUrl; attempt++) {
+          if (attempt > 0) await sleep(3000);
+          const raw = await kaspi.getOrderRawByCode(orderCode);
+          waybillUrl = raw.found && raw.attributes && raw.attributes.kaspiDelivery && raw.attributes.kaspiDelivery.waybill;
+        }
+        if (waybillUrl) {
+          const pdf = await kaspi.downloadWaybillPdf(waybillUrl);
+          // Сначала ищем, кто сейчас в роли "Зав.складом" в базе сотрудников
+          // (вкладка «Сотрудники» на дашборде) — если он привязан (написал
+          // боту, админ вставил его Telegram ID), накладная идёт ему сразу,
+          // без необходимости менять переменные окружения на Render. Если
+          // такого сотрудника пока нет — остаётся старое поведение из
+          // telegram.js (TELEGRAM_WAREHOUSE_CHAT_ID, иначе TELEGRAM_CHAT_ID).
+          const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
+          const sendResult = await telegram.sendDocument(
+            pdf.buffer,
+            "Накладная_" + orderCode + ".pdf",
+            "📦 Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace,
+            warehouseChatIds.length ? { chatId: warehouseChatIds[0] } : undefined
+          );
+          if (!sendResult.ok) {
+            waybillFailed.push("заказ №" + orderCode + ": накладная скачана, но не отправлена в Telegram — " + sendResult.error);
+          }
+        } else {
+          waybillFailed.push("заказ №" + orderCode + ": накладная не появилась в Kaspi за несколько попыток (попробуйте позже вручную)");
+        }
+      } catch (e) {
+        waybillFailed.push("заказ №" + orderCode + ": не удалось скачать/отправить накладную — " + e.message);
+      }
     }
   }
 
@@ -345,6 +390,7 @@ async function runKaspiTransfer(options) {
     skippedAlready,
     unresolved: unresolvedOrders,
     assembleFailed,
+    waybillFailed,
     mappingProblems,
   };
   if (dryRun) summary.dryRunPreview = dryRunPreview;
@@ -352,6 +398,7 @@ async function runKaspiTransfer(options) {
   const errorParts = [];
   if (unresolvedOrders.length > 0) errorParts.push(unresolvedOrders.length + " заказ(ов) не перенесено: " + unresolvedOrders.slice(0, 5).join(" | "));
   if (assembleFailed.length > 0) errorParts.push(assembleFailed.length + " заказ(ов) создано в 1С, но не продвинуто в Kaspi: " + assembleFailed.slice(0, 5).join(" | "));
+  if (waybillFailed.length > 0) errorParts.push(waybillFailed.length + " накладная(ых) не отправлена(о) в Telegram: " + waybillFailed.slice(0, 5).join(" | "));
 
   return { summary, errorText: errorParts.length > 0 ? errorParts.join(" || ") : null };
 }
@@ -370,7 +417,8 @@ async function runKaspiTransferSafe(options) {
       ", создано " + summary.created +
       ", уже было " + summary.skippedAlready +
       ", не перенесено " + summary.unresolved.length +
-      ", не продвинуто в Kaspi " + summary.assembleFailed.length
+      ", не продвинуто в Kaspi " + summary.assembleFailed.length +
+      ", накладная не отправлена " + summary.waybillFailed.length
     );
     if (!isTest) {
       store.setKaspiTransferRunMeta({

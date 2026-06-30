@@ -155,6 +155,24 @@ const server = http.createServer((req, res) => {
     });
   }
 
+  // ---- Telegram: приём входящих сообщений (вебхук). Telegram сам шлёт сюда
+  // POST без нашей куки авторизации — поэтому маршрут вне блока /api/.
+  // Если задан TELEGRAM_WEBHOOK_SECRET — проверяем заголовок-секрет, который
+  // Telegram возвращает при регистрации (см. telegram.ensureWebhook); без
+  // совпадения тело не обрабатываем, но всё равно отвечаем 200. ----
+  if (pathname === "/telegram/webhook" && req.method === "POST") {
+    return readBodyJSON(req, 1024 * 200, (err, update) => {
+      const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+      const gotSecret = req.headers["x-telegram-bot-api-secret-token"];
+      if (!err && update && (!secret || secret === gotSecret)) {
+        telegram.handleIncomingUpdate(update, store).catch((e) => console.error("[telegram] webhook упал: " + e.message));
+      } else if (err) {
+        console.error("[telegram] /telegram/webhook: ошибка разбора тела — " + err.message);
+      }
+      send(res, 200, "ok"); // всегда 200, иначе Telegram будет повторять доставку
+    });
+  }
+
   if (pathname.startsWith("/api/")) {
     if (!auth.isAuthed(req)) return sendJSON(res, 401, { ok: false, error: "auth_required" });
 
@@ -263,6 +281,42 @@ const server = http.createServer((req, res) => {
         .then((report) => sendJSON(res, 200, { ok: true, report: report }))
         .catch((err) => sendJSON(res, 200, { ok: false, error: "bitrix_error", message: err.message }));
     }
+
+    // ---- Сотрудники (вкладка «Сотрудники») ----
+    if (pathname === "/api/employees" && req.method === "GET") {
+      return sendJSON(res, 200, { ok: true, employees: store.getEmployees(), roles: store.getEmployeeRoles() });
+    }
+    if (pathname === "/api/employees" && req.method === "POST") {
+      return readBodyJSON(req, 1024 * 10, (err, body) => {
+        if (err || !body || !String(body.name || "").trim()) {
+          return sendJSON(res, 400, { ok: false, error: "bad_request", message: "укажите хотя бы ФИО" });
+        }
+        const emp = store.addEmployee(body);
+        sendJSON(res, 200, { ok: true, employee: emp, employees: store.getEmployees() });
+      });
+    }
+    if (pathname === "/api/employees/roles" && req.method === "POST") {
+      return readBodyJSON(req, 1024 * 20, (err, body) => {
+        if (err || !body || !Array.isArray(body.roles)) return sendJSON(res, 400, { ok: false, error: "bad_request" });
+        store.saveEmployeeRoles(body.roles);
+        sendJSON(res, 200, { ok: true, roles: store.getEmployeeRoles() });
+      });
+    }
+    if (pathname.startsWith("/api/employees/") && req.method === "PUT") {
+      const id = pathname.slice("/api/employees/".length);
+      return readBodyJSON(req, 1024 * 10, (err, body) => {
+        if (err || !body) return sendJSON(res, 400, { ok: false, error: "bad_request" });
+        const updated = store.updateEmployee(id, body);
+        if (!updated) return sendJSON(res, 404, { ok: false, error: "not_found" });
+        sendJSON(res, 200, { ok: true, employee: updated, employees: store.getEmployees() });
+      });
+    }
+    if (pathname.startsWith("/api/employees/") && req.method === "DELETE") {
+      const id = pathname.slice("/api/employees/".length);
+      const employees = store.deleteEmployee(id);
+      return sendJSON(res, 200, { ok: true, employees: employees });
+    }
+
     return sendJSON(res, 404, { ok: false, error: "not_found" });
   }
 
@@ -283,6 +337,18 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`THE HELLO Team — сервер запущен: http://localhost:${PORT}`);
   console.log(`Пароль входа: ${process.env.APP_PASSWORD ? "(задан в APP_PASSWORD)" : "thehello2026 (стандартный — смените перед публикацией!)"}`);
+
+  // ---- Telegram: регистрация вебхука (приём сообщений от сотрудников),
+  // один раз при старте. RENDER_EXTERNAL_URL Render задаёт автоматически —
+  // вручную ничего настраивать не нужно. Если её нет (например, локальный
+  // запуск) — можно задать PUBLIC_BASE_URL самостоятельно. ----
+  if (telegram.isConfigured()) {
+    const publicBaseUrl = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_BASE_URL || null;
+    telegram.ensureWebhook(publicBaseUrl).then((r) => {
+      if (r.ok) console.log("[telegram] вебхук настроен: " + r.url + " — бот теперь принимает сообщения от сотрудников");
+      else console.log("[telegram] вебхук НЕ настроен (" + r.error + ") — бот будет только отправлять, но не примет сообщения от сотрудников. Задайте PUBLIC_BASE_URL, если RENDER_EXTERNAL_URL недоступен.");
+    });
+  }
 
   // ---- автосинк с 1С: план производства теперь обновляется сам, без ручной загрузки файлов ----
   const ONE_C_INTERVAL_MS = 5 * 60 * 1000;

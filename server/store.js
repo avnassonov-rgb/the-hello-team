@@ -34,6 +34,12 @@ const DEFAULT_STATE = {
     lastRunError: null,
     lastRunSummary: null, // { total, created, skippedAlready, unresolved: [...] }
   },
+  // ---- Сотрудники: ФИО/телефон/роли/Telegram-ID, для бота и маршрутизации
+  // уведомлений (например, кто сейчас "Зав.складом" получает накладные). ----
+  employees: [], // { id, name, phone, roles: [string], telegramId: string|null, status: "active"|"inactive", updatedAt }
+  employeeRoles: [
+    { name: "Зав.складом", description: "Получает накладные (стикеры) по заказам Kaspi в Telegram." },
+  ],
 };
 
 const MAX_BITRIX_EVENTS = 5000;
@@ -105,6 +111,69 @@ function setKaspiTransferRunMeta(patch) {
   return patchState({ kaspiTransfer: kt });
 }
 
+// ---- Сотрудники ----
+function genEmployeeId() {
+  return "emp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+function getEmployees() {
+  const state = readState();
+  return Array.isArray(state.employees) ? state.employees : [];
+}
+function getEmployeeRoles() {
+  const state = readState();
+  return Array.isArray(state.employeeRoles) ? state.employeeRoles : DEFAULT_STATE.employeeRoles;
+}
+function saveEmployeeRoles(list) {
+  const clean = (Array.isArray(list) ? list : [])
+    .map((r) => ({ name: String(r.name || "").trim(), description: String(r.description || "").trim() }))
+    .filter((r) => r.name);
+  return patchState({ employeeRoles: clean });
+}
+function addEmployee(emp) {
+  const list = getEmployees().slice();
+  const next = {
+    id: genEmployeeId(),
+    name: String((emp && emp.name) || "").trim(),
+    phone: String((emp && emp.phone) || "").trim(),
+    roles: Array.isArray(emp && emp.roles) ? emp.roles.filter(Boolean) : [],
+    telegramId: (emp && emp.telegramId) ? String(emp.telegramId).trim() : null,
+    status: (emp && emp.status === "inactive") ? "inactive" : "active",
+    updatedAt: new Date().toISOString(),
+  };
+  list.push(next);
+  patchState({ employees: list });
+  return next;
+}
+function updateEmployee(id, patch) {
+  const list = getEmployees().slice();
+  const idx = list.findIndex((e) => e.id === id);
+  if (idx === -1) return null;
+  const merged = Object.assign({}, list[idx], patch || {}, { id: list[idx].id, updatedAt: new Date().toISOString() });
+  if (patch && Object.prototype.hasOwnProperty.call(patch, "roles")) {
+    merged.roles = Array.isArray(patch.roles) ? patch.roles.filter(Boolean) : [];
+  }
+  list[idx] = merged;
+  patchState({ employees: list });
+  return merged;
+}
+function deleteEmployee(id) {
+  const list = getEmployees().filter((e) => e.id !== id);
+  patchState({ employees: list });
+  return list;
+}
+// Telegram chat_id'ы активных сотрудников с данной ролью (для маршрутизации,
+// например, "Зав.складом" -> кому слать накладные Kaspi).
+function findEmployeeChatIdsByRole(roleName) {
+  return getEmployees()
+    .filter((e) => e.status !== "inactive" && Array.isArray(e.roles) && e.roles.indexOf(roleName) !== -1 && e.telegramId)
+    .map((e) => e.telegramId);
+}
+// Ищет сотрудника по Telegram chat_id (для ответа бота при входящем сообщении).
+function findEmployeeByTelegramId(telegramId) {
+  const id = String(telegramId || "");
+  return getEmployees().find((e) => String(e.telegramId || "") === id) || null;
+}
+
 function readState() {
   ensureDir();
   if (!fs.existsSync(STATE_FILE)) return Object.assign({}, DEFAULT_STATE);
@@ -137,4 +206,6 @@ module.exports = {
   appendBitrixEvent, getBitrixEvents,
   getCachedStage, setCachedStage, deleteCachedStage,
   getKaspiTransferState, isKaspiOrderProcessed, markKaspiOrdersProcessed, setKaspiTransferRunMeta,
+  getEmployees, getEmployeeRoles, saveEmployeeRoles, addEmployee, updateEmployee, deleteEmployee,
+  findEmployeeChatIdsByRole, findEmployeeByTelegramId,
 };
