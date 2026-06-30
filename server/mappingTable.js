@@ -172,7 +172,21 @@ function buildMappingMap(csvText) {
     map.get(code).components.push({ name1C, qty, boxCapacity });
   });
 
-  return { map, problems, rowCount: dataRows.length };
+  // nameToCode: название компонента в 1С -> его СОБСТВЕННЫЙ артикул Kaspi —
+  // берём только из строк типа "товар" (ровно 1 компонент = сам товар, не
+  // часть набора). Нужно для priceTable.js: чтобы найти реальную цену
+  // компонента набора на листе KASPI.KZ (где цены привязаны к артикулу),
+  // сначала находим артикул ЭТОГО ЖЕ товара здесь, по точному совпадению
+  // названия в 1С (оно одинаковое и в строке "товар", и в строках "набор",
+  // т.к. это один и тот же текст, скопированный пользователем).
+  const nameToCode = new Map();
+  map.forEach((entry, code) => {
+    if (entry.type === "товар" && entry.components.length === 1) {
+      nameToCode.set(norm(entry.components[0].name1C), code);
+    }
+  });
+
+  return { map, problems, rowCount: dataRows.length, nameToCode };
 }
 
 async function loadMappingTable() {
@@ -181,11 +195,11 @@ async function loadMappingTable() {
     throw new Error("Не задана MAPPING_SHEET_CSV_URL — добавьте переменную окружения со ссылкой на опубликованный CSV таблицы соответствия (Render → Environment).");
   }
   const csvText = await httpGetText(url, 20000);
-  const { map, problems, rowCount } = buildMappingMap(csvText);
+  const { map, problems, rowCount, nameToCode } = buildMappingMap(csvText);
   if (map.size === 0) {
     throw new Error("таблица соответствия прочитана, но не нашлось ни одной строки с кодом — проверьте ссылку/формат");
   }
-  return { map, problems, rowCount };
+  return { map, problems, rowCount, nameToCode };
 }
 
 module.exports = { loadMappingTable, buildMappingMap, parseCsv };
