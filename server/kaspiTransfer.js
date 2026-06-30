@@ -28,6 +28,7 @@
 const kaspi = require("./kaspi");
 const oneC = require("./oneC");
 const mappingTable = require("./mappingTable");
+const priceTable = require("./priceTable");
 const store = require("./store");
 const telegram = require("./telegram");
 
@@ -145,10 +146,24 @@ async function loadOrderLines(orderId) {
 
 // Разворачивает строки заказа Kaspi (код+кол-во+цена) в строки документа 1С
 // (Ref_Key номенклатуры + кол-во + цена), используя таблицу соответствия.
-// Для "набор" — цена за набор делится поровну между его компонентами
-// (подтверждено Александром: цена берётся из заказа Kaspi, а не из 1С).
-function buildDocLines(orderLines, mappingMap, nomByName, unresolved) {
+// Цена за набор делится между его компонентами ПРОПОРЦИОНАЛЬНО их реальным
+// ценам с листа KASPI.KZ (priceTable.js), а не поровну — подтверждено
+// Александром 30.06.2026 на примере "Набор 4 в 1": продан за 3990тг, реальные
+// цены компонентов 1350/1490/990/1490 (сумма 5320) → доли 25.4%/28%/18.6%/28%
+// → этими долями делятся фактические 3990тг (а не поровну по 997.5).
+// Само деление берётся из заказа Kaspi (ol.unitPrice), а не из 1С/прайса —
+// сумма строк документа всегда равна тому, что реально заплатил покупатель.
+//   priceMap — артикул Kaspi -> цена продажи (из priceTable.loadPriceTable).
+//   nameToCode — название компонента в 1С -> его собственный артикул Kaspi
+//   (из mappingTable.loadMappingTable, по строкам типа "товар") — нужен,
+//   чтобы найти артикул компонента и по нему — его цену в priceMap.
+// Если для какого-то компонента набора реальная цена не нашлась (нет в
+// priceMap/nameToCode, например новый товар) — для ЭТОГО набора используется
+// старое поведение (деление поровну), чтобы перенос заказа не остановился;
+// причина попадает в priceBreakdown[].fallbackReason для проверки на dry-run.
+function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, nameToCode) {
   const docLines = [];
+  const priceBreakdown = []; // только по наборам (>1 компонент) — для dry-run/диагностики
   for (const ol of orderLines) {
     if (ol.error || !ol.code) {
       unresolved.push((ol.code ? "код " + ol.code : "позиция без кода") + ": " + (ol.error || "нет кода товара"));
@@ -160,7 +175,32 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved) {
       continue;
     }
     const componentCount = entry.components.length;
-    const priceShare = ol.unitPrice / componentCount;
+
+    // shares: comp -> { refPrice, share } — заполняется только если для
+    // ВСЕХ компонентов набора нашлась реальная цена; иначе остаётся null и
+    // ниже используется деление поровну (fallback).
+    let shares = null;
+    let fallbackReason = null;
+    if (componentCount > 1 && priceMap && nameToCode) {
+      const refPrices = entry.components.map((comp) => {
+        const code = nameToCode.get(norm(comp.name1C));
+        const price = code ? priceMap.get(code) : null;
+        return { comp, code, price };
+      });
+      const missing = refPrices.filter((rp) => !(rp.price > 0));
+      if (missing.length === 0) {
+        const sum = refPrices.reduce((s, rp) => s + rp.price, 0);
+        if (sum > 0) {
+          shares = new Map();
+          refPrices.forEach((rp) => shares.set(rp.comp, { refPrice: rp.price, share: rp.price / sum }));
+        } else {
+          fallbackReason = "сумма реальных цен компонентов равна 0";
+        }
+      } else {
+        fallbackReason = "нет реальной цены (лист KASPI.KZ) для: " + missing.map((rp) => rp.comp.name1C).join(", ");
+      }
+    }
+
     let anyMissing = false;
     // nomByName хранит {ref, unitKey} на товар (см. fetchNomenclatureByNameMap
     // в oneC.js) — unitKey нужен в строке документа, иначе 1С падает с общей
@@ -168,14 +208,31 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved) {
     const lines = entry.components.map((comp) => {
       const nom = nomByName.get(norm(comp.name1C));
       if (!nom || !nom.ref) anyMissing = true;
+      const price = shares && shares.has(comp) ? ol.unitPrice * shares.get(comp).share : ol.unitPrice / componentCount;
       return {
         nomKey: nom ? nom.ref : null,
         unitKey: nom ? nom.unitKey : null,
         qty: comp.qty * ol.qty,
-        price: priceShare,
+        price,
         compName: comp.name1C,
       };
     });
+
+    if (componentCount > 1) {
+      priceBreakdown.push({
+        kaspiCode: ol.code,
+        kitUnitPrice: ol.unitPrice,
+        usedProportionalSplit: !!shares,
+        fallbackReason,
+        components: entry.components.map((comp) => ({
+          name: comp.name1C,
+          refPrice: shares && shares.has(comp) ? shares.get(comp).refPrice : null,
+          share: shares && shares.has(comp) ? shares.get(comp).share : null,
+          computedPrice: shares && shares.has(comp) ? ol.unitPrice * shares.get(comp).share : ol.unitPrice / componentCount,
+        })),
+      });
+    }
+
     if (anyMissing) {
       const missingNames = lines.filter((l) => !l.nomKey).map((l) => l.compName);
       unresolved.push("код " + ol.code + ": компонент(ы) не найдены в 1С — " + missingNames.join(", "));
@@ -183,7 +240,7 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved) {
     }
     lines.forEach((l) => docLines.push({ nomKey: l.nomKey, qty: l.qty, price: l.price, unitKey: l.unitKey }));
   }
-  return docLines;
+  return { docLines, priceBreakdown };
 }
 
 // Считает количество мест (numberOfSpace) для ASSEMBLE по данным из таблицы
@@ -203,9 +260,15 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved) {
 // Товары без записи в таблице соответствия считаются с вместимостью по
 // умолчанию 4 (см. mappingTable.DEFAULT-аналог — здесь захардкожено то же
 // число для согласованности, если строка вообще не нашлась в таблице).
-function computeNumberOfSpace(orderLines, mappingMap) {
+// detailed=true добавляет breakdown по компонентам и группам — только для
+// dryRun-предпросмотра, чтобы видеть ПОЧЕМУ получилось именно такое число
+// коробок (например, если вместимость у компонентов в таблице соответствия
+// разная — каждая отдельная вместимость это отдельная группа, они НЕ
+// объединяются между собой, даже если это компоненты одного набора).
+function computeNumberOfSpace(orderLines, mappingMap, detailed) {
   const FALLBACK_CAPACITY = 4;
   const byCapacity = new Map(); // вместимость -> сумма количества
+  const breakdown = [];
   for (const ol of orderLines) {
     if (ol.error || !ol.code) continue;
     const entry = mappingMap.get(ol.code);
@@ -214,16 +277,22 @@ function computeNumberOfSpace(orderLines, mappingMap) {
         const capacity = comp.boxCapacity > 0 ? comp.boxCapacity : FALLBACK_CAPACITY;
         const qty = ol.qty * (comp.qty || 1);
         byCapacity.set(capacity, (byCapacity.get(capacity) || 0) + qty);
+        if (detailed) breakdown.push({ component: comp.name1C, boxCapacity: capacity, qty });
       }
     } else {
       byCapacity.set(FALLBACK_CAPACITY, (byCapacity.get(FALLBACK_CAPACITY) || 0) + ol.qty);
+      if (detailed) breakdown.push({ component: ol.code, boxCapacity: FALLBACK_CAPACITY, qty: ol.qty, note: "нет в таблице соответствия — вместимость по умолчанию" });
     }
   }
   let spaces = 0;
+  const groups = [];
   for (const [capacity, qty] of byCapacity) {
-    spaces += Math.ceil(qty / capacity);
+    const groupSpaces = Math.ceil(qty / capacity);
+    spaces += groupSpaces;
+    if (detailed) groups.push({ boxCapacity: capacity, totalQty: qty, spaces: groupSpaces });
   }
-  return spaces > 0 ? spaces : 1;
+  spaces = spaces > 0 ? spaces : 1;
+  return detailed ? { spaces, breakdown, groups } : spaces;
 }
 
 // options.orderId  — строка: код заказа Kaspi (то, что видно в кабинете, напр.
@@ -237,7 +306,11 @@ async function runKaspiTransfer(options) {
   const dryRun = !!opts.dryRun;
   const onlyOrderCode = opts.orderId ? String(opts.orderId).trim() : null;
 
-  const { map: mappingMap, problems: mappingProblems } = await mappingTable.loadMappingTable();
+  const { map: mappingMap, problems: mappingProblems, nameToCode } = await mappingTable.loadMappingTable();
+  // priceMap не критичен: если таблица цен недоступна/не настроена,
+  // buildDocLines сам откатывается на деление поровну (см. её комментарий) —
+  // перенос заказов не должен остановиться из-за этого.
+  const { map: priceMap, problems: priceProblems } = await priceTable.loadPriceTable();
 
   const fixed = await resolveFixedRefs();
   if (fixed.problems.length > 0) {
@@ -318,23 +391,27 @@ async function runKaspiTransfer(options) {
     }
 
     const unresolved = [];
-    const docLines = buildDocLines(orderLines, mappingMap, nomByName, unresolved);
+    const { docLines, priceBreakdown } = buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, nameToCode);
     if (unresolved.length > 0 || docLines.length === 0) {
       unresolvedOrders.push("заказ №" + orderCode + ": " + (unresolved.join("; ") || "не удалось собрать ни одной строки"));
       continue;
     }
 
-    const numberOfSpace = computeNumberOfSpace(orderLines, mappingMap);
-
     if (dryRun) {
+      const spaceDetail = computeNumberOfSpace(orderLines, mappingMap, true);
       dryRunPreview.push({
         orderCode,
         orderId: order.id,
         wouldCreateRealizationLines: docLines.map((l) => ({ nomKey: l.nomKey, qty: l.qty, price: l.price, unitKey: l.unitKey })),
-        wouldAssembleNumberOfSpace: numberOfSpace,
+        priceBreakdown, // по каждому набору: реальные цены/доли компонентов, или причина отката на деление поровну
+        wouldAssembleNumberOfSpace: spaceDetail.spaces,
+        numberOfSpaceBreakdown: spaceDetail.breakdown, // по каждому компоненту: вместимость коробки и кол-во
+        numberOfSpaceGroups: spaceDetail.groups, // итоговые группы по вместимости: сколько коробок в каждой
       });
       continue;
     }
+
+    const numberOfSpace = computeNumberOfSpace(orderLines, mappingMap);
 
     let docResult;
     try {
@@ -386,12 +463,17 @@ async function runKaspiTransfer(options) {
           // Если таких сотрудников пока нет — остаётся старое поведение из
           // telegram.js (TELEGRAM_WAREHOUSE_CHAT_ID, иначе TELEGRAM_CHAT_ID).
           const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
-          const caption = "📦 Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
-          const sendResults = warehouseChatIds.length
-            ? await Promise.all(warehouseChatIds.map((chatId) =>
-                telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption, { chatId })
-              ))
-            : [await telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption)];
+          const caption = "Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
+          let sendResults;
+          if (warehouseChatIds.length) {
+            sendResults = await Promise.all(
+              warehouseChatIds.map(function (chatId) {
+                return telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption, { chatId: chatId });
+              })
+            );
+          } else {
+            sendResults = [await telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption)];
+          }
           const failedSends = sendResults.filter((r) => !r.ok);
           if (failedSends.length) {
             waybillFailed.push(
@@ -419,6 +501,7 @@ async function runKaspiTransfer(options) {
     assembleFailed,
     waybillFailed,
     mappingProblems,
+    priceProblems,
   };
   if (dryRun) summary.dryRunPreview = dryRunPreview;
 
