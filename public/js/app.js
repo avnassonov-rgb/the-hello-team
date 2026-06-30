@@ -576,6 +576,237 @@
     }
   }
 
+  /* ---------------- сотрудники (роли, Telegram-ID, маршрутизация стикеров) ---------------- */
+  var employeesLoaded = false;
+  var empData = { employees: [], roles: [] };
+  var empEditingId = null; // null — ничего не редактируется; "new" — форма нового сотрудника; иначе id сотрудника
+
+  function empRoleChipsHTML(roles) {
+    if (!roles || !roles.length) return '<span class="role-chip role-chip-empty">без роли</span>';
+    return roles.map(function (r) { return '<span class="role-chip">' + E.esc(r) + '</span>'; }).join(" ");
+  }
+
+  function empCardViewHTML(emp) {
+    var active = emp.status !== "inactive";
+    var html = '<div class="emp-row-view">';
+    html += '<div class="emp-row-main">';
+    html += '<div class="emp-name">' + E.esc(emp.name || "—") +
+      ' <span class="emp-status ' + (active ? "active" : "inactive") + '">' + (active ? "активен" : "неактивен") + '</span></div>';
+    html += '<div class="emp-meta">';
+    html += '<span class="emp-meta-item">' + (emp.phone ? E.esc(emp.phone) : "телефон не указан") + '</span>';
+    html += '<span class="emp-meta-item">' + (emp.telegramId ? "Telegram ID: " + E.esc(emp.telegramId) : "Telegram не привязан") + '</span>';
+    html += '</div>';
+    html += '<div class="emp-roles">' + empRoleChipsHTML(emp.roles) + '</div>';
+    html += '</div>';
+    html += '<div class="emp-row-actions">';
+    html += '<button class="btn btn-ghost emp-edit-btn" type="button" data-id="' + E.esc(emp.id) + '">Изменить</button>';
+    html += '<button class="cdel emp-del-btn" type="button" data-id="' + E.esc(emp.id) + '" title="Удалить">✕</button>';
+    html += '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  function buildEmpForm(emp) {
+    var wrap = el("div", { class: "emp-form" });
+
+    var nameField = el("div", { class: "field" });
+    nameField.appendChild(el("label", {}, "ФИО"));
+    var nameInp = el("input", { type: "text" });
+    nameInp.value = emp ? (emp.name || "") : "";
+    nameField.appendChild(nameInp);
+    wrap.appendChild(nameField);
+
+    var phoneField = el("div", { class: "field" });
+    phoneField.appendChild(el("label", {}, "Телефон"));
+    var phoneInp = el("input", { type: "text", placeholder: "+7 7XX XXX XX XX" });
+    phoneInp.value = emp ? (emp.phone || "") : "";
+    phoneField.appendChild(phoneInp);
+    wrap.appendChild(phoneField);
+
+    var tgField = el("div", { class: "field" });
+    tgField.appendChild(el("label", {}, "Telegram ID"));
+    tgField.appendChild(el("div", { class: "hint" }, "Заполняется после того, как сотрудник один раз напишет боту «Наталья» и передаст вам свой ID."));
+    var tgInp = el("input", { type: "text", placeholder: "например, 123456789" });
+    tgInp.value = emp && emp.telegramId ? emp.telegramId : "";
+    tgField.appendChild(tgInp);
+    wrap.appendChild(tgField);
+
+    var rolesField = el("div", { class: "field" });
+    rolesField.appendChild(el("label", {}, "Роли (можно несколько)"));
+    var rolesWrap = el("div", { class: "emp-role-checks" });
+    var currentRoles = emp && Array.isArray(emp.roles) ? emp.roles : [];
+    (empData.roles || []).forEach(function (r) {
+      var lbl = el("label", { class: "emp-role-check" });
+      if (r.description) lbl.title = r.description;
+      var cb = el("input", { type: "checkbox", value: r.name });
+      cb.checked = currentRoles.indexOf(r.name) !== -1;
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(" " + r.name));
+      rolesWrap.appendChild(lbl);
+    });
+    if (!(empData.roles || []).length) rolesWrap.appendChild(el("div", { class: "hint" }, "Сначала добавьте роли в блоке «Роли» ниже."));
+    rolesField.appendChild(rolesWrap);
+    wrap.appendChild(rolesField);
+
+    var statusField = el("div", { class: "field" });
+    statusField.appendChild(el("label", {}, "Статус"));
+    var statusSel = el("select", {}, '<option value="active">активен</option><option value="inactive">неактивен</option>');
+    statusSel.value = emp && emp.status === "inactive" ? "inactive" : "active";
+    statusField.appendChild(statusSel);
+    wrap.appendChild(statusField);
+
+    var btnRow = el("div", { style: "display:flex;gap:10px;margin-top:6px;" });
+    var saveBtn = el("button", { class: "btn btn-pink", type: "button" }, emp ? "Сохранить" : "Добавить");
+    var cancelBtn = el("button", { class: "btn btn-ghost", type: "button" }, "Отмена");
+    btnRow.appendChild(saveBtn); btnRow.appendChild(cancelBtn);
+    wrap.appendChild(btnRow);
+
+    cancelBtn.addEventListener("click", function () {
+      empEditingId = null;
+      renderEmployees();
+    });
+    saveBtn.addEventListener("click", function () {
+      var payload = {
+        name: nameInp.value.trim(),
+        phone: phoneInp.value.trim(),
+        telegramId: tgInp.value.trim() || null,
+        roles: Array.prototype.slice.call(rolesWrap.querySelectorAll('input[type=checkbox]:checked')).map(function (c) { return c.value; }),
+        status: statusSel.value,
+      };
+      if (!payload.name) { alert("Укажите ФИО."); return; }
+      saveBtn.disabled = true;
+      var req = emp
+        ? fetch("/api/employees/" + encodeURIComponent(emp.id), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+        : fetch("/api/employees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      req.then(function (r) { return r.json(); }).then(function (j) {
+        saveBtn.disabled = false;
+        if (!j || j.ok === false) { alert("Не удалось сохранить: " + ((j && j.message) || (j && j.error) || "ошибка")); return; }
+        empData.employees = j.employees || empData.employees;
+        empEditingId = null;
+        renderEmployees();
+      }).catch(function () {
+        saveBtn.disabled = false;
+        alert("Ошибка соединения с сервером.");
+      });
+    });
+
+    return wrap;
+  }
+
+  function renderEmployees() {
+    var listWrap = document.getElementById("empList");
+    if (!listWrap) return;
+    listWrap.innerHTML = "";
+
+    if (empEditingId === "new") {
+      var newCard = el("div", { class: "emp-card emp-card-editing" });
+      newCard.appendChild(el("div", { class: "emp-card-title" }, "Новый сотрудник"));
+      newCard.appendChild(buildEmpForm(null));
+      listWrap.appendChild(newCard);
+    }
+
+    if (!empData.employees.length && empEditingId !== "new") {
+      listWrap.appendChild(el("div", { class: "empty-cat" }, "Сотрудников пока нет — добавьте первого ниже."));
+    }
+
+    empData.employees.forEach(function (emp) {
+      var card = el("div", { class: "emp-card" });
+      if (empEditingId === emp.id) {
+        card.classList.add("emp-card-editing");
+        card.appendChild(el("div", { class: "emp-card-title" }, "Изменить сотрудника"));
+        card.appendChild(buildEmpForm(emp));
+      } else {
+        card.insertAdjacentHTML("beforeend", empCardViewHTML(emp));
+      }
+      listWrap.appendChild(card);
+    });
+
+    $all("#empList .emp-edit-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        empEditingId = btn.getAttribute("data-id");
+        renderEmployees();
+      });
+    });
+    $all("#empList .emp-del-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var id = btn.getAttribute("data-id");
+        var emp = empData.employees.filter(function (e) { return e.id === id; })[0];
+        if (!confirm("Удалить сотрудника" + (emp ? " «" + emp.name + "»" : "") + "?")) return;
+        fetch("/api/employees/" + encodeURIComponent(id), { method: "DELETE" })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { empData.employees = (j && j.employees) || []; renderEmployees(); })
+          .catch(function () { alert("Ошибка соединения с сервером."); });
+      });
+    });
+  }
+
+  function renderEmpRoleEditor() {
+    var rowsWrap = document.getElementById("empRoleRows");
+    if (!rowsWrap) return;
+    rowsWrap.innerHTML = "";
+    empData.roles.forEach(function (role, idx) {
+      var row = el("div", { class: "crow" });
+      var nameInp = el("input", { type: "text", "data-idx": idx, "data-f": "name", placeholder: "например, Зав.складом" });
+      nameInp.value = role.name || "";
+      var descInp = el("input", { type: "text", "data-idx": idx, "data-f": "description", placeholder: "что получает/может эта роль", style: "flex:2;" });
+      descInp.value = role.description || "";
+      var delBtn = el("button", { class: "cdel", type: "button", title: "Удалить" }, "✕");
+      delBtn.addEventListener("click", function () { empData.roles.splice(idx, 1); renderEmpRoleEditor(); });
+      row.appendChild(nameInp); row.appendChild(descInp); row.appendChild(delBtn);
+      rowsWrap.appendChild(row);
+    });
+  }
+
+  function initEmployeesButtons() {
+    document.getElementById("empAddBtn").addEventListener("click", function () {
+      empEditingId = "new";
+      renderEmployees();
+    });
+    document.getElementById("empAddRoleBtn").addEventListener("click", function () {
+      empData.roles.push({ name: "", description: "" });
+      renderEmpRoleEditor();
+    });
+    document.getElementById("empSaveRolesBtn").addEventListener("click", function () {
+      var rowsWrap = document.getElementById("empRoleRows");
+      var next = empData.roles.map(function (_, idx) {
+        var nameInp = rowsWrap.querySelector('input[data-f="name"][data-idx="' + idx + '"]');
+        var descInp = rowsWrap.querySelector('input[data-f="description"][data-idx="' + idx + '"]');
+        return { name: nameInp ? nameInp.value.trim() : "", description: descInp ? descInp.value.trim() : "" };
+      }).filter(function (r) { return r.name; });
+      fetch("/api/employees/roles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roles: next }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          empData.roles = (j && j.roles) || next;
+          renderEmpRoleEditor();
+          renderEmployees(); // обновить список доступных ролей в открытых формах
+        })
+        .catch(function () { alert("Ошибка соединения с сервером."); });
+    });
+  }
+
+  function loadEmployees() {
+    fetch("/api/employees").then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || j.ok === false) return;
+      empData.employees = j.employees || [];
+      empData.roles = j.roles || [];
+      renderEmployees();
+      renderEmpRoleEditor();
+    }).catch(function () {});
+  }
+
+  function initEmployeesTab() {
+    initEmployeesButtons();
+    var tabBtn = document.querySelector('.tab[data-tab="employees"]');
+    if (tabBtn) {
+      tabBtn.addEventListener("click", function () {
+        if (!employeesLoaded) {
+          employeesLoaded = true;
+          loadEmployees();
+        }
+      });
+    }
+  }
+
   /* ---------------- Kaspi: безопасный тест переноса на 1 заказе ---------------- */
   function initKaspiTest() {
     var input = document.getElementById("kaspiTestOrderId");
@@ -626,6 +857,7 @@
     initControlButtons();
     initPrintButtons();
     initManagersTab();
+    initEmployeesTab();
     initKaspiTest();
 
     fetch("/api/me").then(function (r) { return r.json(); }).then(function (me) {
