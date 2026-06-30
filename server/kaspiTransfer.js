@@ -250,16 +250,38 @@ async function runKaspiTransfer(options) {
   const wantedStatus = statusFromEnv();
 
   let candidateOrders = [];
-  for (const state of states) {
-    const list = await kaspi.getOrders({ state, pageSize: 100 });
-    list.items.forEach((o) => candidateOrders.push(o));
-  }
 
   if (onlyOrderCode) {
-    candidateOrders = candidateOrders.filter((o) => {
-      const attrs = o.attributes || {};
-      return String(o.id) === onlyOrderCode || String(attrs.code) === onlyOrderCode;
-    });
+    // Явный тест ОДНОГО заказа: берём его напрямую по коду (без постраничной
+    // выборки по state). Так надёжнее — у магазина бывает 100+ заказов в
+    // одном state (см. комментарий выше), а getOrders({state, pageSize:100})
+    // отдаёт только первую страницу, поэтому конкретный заказ мог туда не попасть
+    // даже если он реально существует и подходит по state/status (подтверждено
+    // живым тестом на заказе 981126374: state=KASPI_DELIVERY, status=ACCEPTED_BY_MERCHANT —
+    // всё совпадало, просто не попал в первые 100 заказов выборки).
+    try {
+      const raw = await kaspi.getOrderRawByCode(onlyOrderCode);
+      if (raw.found) candidateOrders.push({ id: raw.orderId, attributes: raw.attributes });
+    } catch (e) {
+      // не критично — ниже всё равно будет понятная ошибка "не найден"
+    }
+  } else {
+    // Обычный запуск по расписанию: проходим ВСЕ страницы каждого state, а не
+    // только первую — иначе при 100+ заказах в state часть из них (особенно
+    // новые) могла бы остаться незамеченной.
+    for (const state of states) {
+      let pageNumber = 0;
+      const pageSize = 100;
+      for (;;) {
+        const list = await kaspi.getOrders({ state, pageSize, pageNumber });
+        list.items.forEach((o) => candidateOrders.push(o));
+        pageNumber++;
+        const pageCount = list.pageCount;
+        if (!list.items.length) break;
+        if (pageCount != null && pageNumber >= pageCount) break;
+        if (pageNumber > 30) break; // защита от бесконечного цикла, если meta некорректна
+      }
+    }
   }
 
   const newOrders = candidateOrders.filter((o) => {
