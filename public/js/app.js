@@ -417,7 +417,10 @@
     computed.active.forEach(function (o) { cats[o.cat] && cats[o.cat].push(o); });
     [["catOwn", "own"], ["catTk", "tk"], ["catOther", "other"]].forEach(function (pair) {
       var wrap = document.getElementById(pair[0]);
+      var sumEl = document.getElementById(pair[0] + "Sum");
       var list = cats[pair[1]].slice().sort(function (a, b) { return (b.age || 0) - (a.age || 0); });
+      var totalSum = list.reduce(function (acc, o) { return acc + (o.sum || 0); }, 0);
+      if (sumEl) sumEl.textContent = list.length ? E.fmtMoney(totalSum) + " ₸" : "";
       wrap.innerHTML = "";
       if (!list.length) {
         wrap.innerHTML = '<div class="empty-cat">нет заказов</div>';
