@@ -420,9 +420,9 @@ server.listen(PORT, () => {
     console.log("[kaspi] фоновая проверка выключена — не задана переменная KASPI_TOKEN");
   }
 
-  // ---- перенос заказов Kaspi → 1С: запускается строго 2 раза в день, в 08:00
-  // и 13:10 по времени Костаная (UTC+5, без перевода времени на зиму/лето —
-  // поэтому это ровно 03:00 и 08:10 по UTC, без исключений). НЕ постоянный
+  // ---- перенос заказов Kaspi → 1С: запускается строго 2 раза в день, в 08:45
+  // и 13:15 по времени Костаная (UTC+5, без перевода времени на зиму/лето —
+  // поэтому это ровно 03:45 и 08:15 по UTC, без исключений). НЕ постоянный
   // цикл — раз запущено в нужный момент, следующий запуск планируется через
   // ровно 24 часа (смещение Костаная фиксированное, поэтому 24 часа = снова
   // то же самое время суток в Костанае, без накопления ошибки). ----
@@ -451,9 +451,9 @@ server.listen(PORT, () => {
   const transferPaused = process.env.KASPI_TRANSFER_PAUSED === "1" || process.env.KASPI_TRANSFER_PAUSED === "true";
   const kaspiTransferReady = !transferPaused && process.env.ONEC_PASSWORD && process.env.KASPI_TOKEN && process.env.MAPPING_SHEET_CSV_URL;
   if (kaspiTransferReady) {
-    console.log("[kaspiTransfer] расписание включено — запуск в 08:00 и 13:10 по Костанаю");
-    scheduleDailyKaspiTransfer(3, 0, "08:00 Костанай");
-    scheduleDailyKaspiTransfer(8, 10, "13:10 Костанай");
+    console.log("[kaspiTransfer] расписание включено — запуск в 08:45 и 13:15 по Костанаю");
+    scheduleDailyKaspiTransfer(3, 45, "08:45 Костанай");
+    scheduleDailyKaspiTransfer(8, 15, "13:15 Костанай");
   } else if (transferPaused) {
     console.log("[kaspiTransfer] расписание выключено — стоит на паузе (KASPI_TRANSFER_PAUSED=1). Ручной запуск через /api/kaspi-transfer/run работает как обычно.");
   } else {
