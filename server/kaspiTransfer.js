@@ -603,7 +603,7 @@ async function runKaspiTransfer(options) {
     for (let attempt = 0; attempt < ASSEMBLE_RETRY_ATTEMPTS && !assembled; attempt++) {
       if (attempt > 0) await sleep(ASSEMBLE_RETRY_DELAY_MS);
       try {
-        await kaspi.assembleOrder(order.id, numberOfSpace);
+        await kaspi.assembleOrder(order.id, orderCode, numberOfSpace);
         assembled = true;
       } catch (e) {
         assembleErrorMessage = e.message;

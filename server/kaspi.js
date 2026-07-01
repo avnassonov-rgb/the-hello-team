@@ -220,6 +220,50 @@ async function getOrderRawByCode(code, timeoutMs) {
   return { found: true, orderId: items[0].id, attributes: items[0].attributes || {} };
 }
 
+// Скачивает PDF накладной по ссылке из attributes.kaspiDelivery.waybill
+// (получена через getOrderRawByCode). Это отдельный домен/путь Kaspi
+// (kaspi.kz/shop/api/waybill/<токен>), НЕ под BASE_PATH "/shop/api/v2/" —
+// поэтому используется свой http-запрос с полным разбором URL, а не
+// httpGetJSON (тот всегда добавляет BASE_PATH и парсит JSON, здесь же
+// ответ — бинарный PDF).
+function downloadWaybillPdf(waybillUrl, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    if (!token()) {
+      return reject(new Error("Не задан KASPI_TOKEN — добавьте переменную окружения в настройках Render (Environment) и перезапустите сервис."));
+    }
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(waybillUrl);
+    } catch (e) {
+      return reject(new Error("Некорректная ссылка на накладную: " + waybillUrl));
+    }
+    const options = {
+      hostname: parsedUrl.hostname,
+      path: parsedUrl.pathname + (parsedUrl.search || ""),
+      method: "GET",
+      headers: {
+        "X-Auth-Token": token(),
+        "Accept": "*/*",
+      },
+      timeout: timeoutMs || 20000,
+    };
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const buffer = Buffer.concat(chunks);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error("Kaspi API (накладная) [" + res.statusCode + "]: " + buffer.toString("utf8").slice(0, 300)));
+        }
+        resolve({ buffer: buffer, contentType: res.headers["content-type"] || "application/pdf" });
+      });
+    });
+    req.on("error", (e) => reject(new Error("Kaspi API (накладная): ошибка соединения — " + e.message)));
+    req.on("timeout", () => req.destroy(new Error("Kaspi API (накладная): таймаут запроса")));
+    req.end();
+  });
+}
+
 // Лёгкая проверка связи/токена Kaspi — для фонового мониторинга (Telegram-уведомления).
 // Один минимальный запрос (1 заказ), не тянет позиции/товары. Бросает исключение при сбое.
 async function healthCheck() {
@@ -293,8 +337,14 @@ async function acceptOrder(orderId, orderCode, timeoutMs) {
 
 // Скомплектовать заказ → формирует накладную и переводит в "Передача" (q3210).
 // numberOfSpace — количество мест/коробок, по умолчанию "1".
-async function assembleOrder(orderId, numberOfSpace, timeoutMs) {
-  return setOrderStatus(orderId, { status: "ASSEMBLE", numberOfSpace: String(numberOfSpace || 1) }, timeoutMs);
+// orderCode — видимый номер заказа (атрибут code, напр. "981145272"): по аналогии
+// с acceptOrder (q3211), где code обязателен, подозреваем что q3210 тоже требует
+// его — иначе Kaspi стабильно отвечал 404 "Order not found" при status=ASSEMBLE
+// (подтверждено на заказе 981145272, 2026-07-01).
+async function assembleOrder(orderId, orderCode, numberOfSpace, timeoutMs) {
+  const attrs = { status: "ASSEMBLE", numberOfSpace: String(numberOfSpace || 1) };
+  if (orderCode) attrs.code = String(orderCode);
+  return setOrderStatus(orderId, attrs, timeoutMs);
 }
 
 module.exports = {
@@ -304,6 +354,7 @@ module.exports = {
   debugSample,
   listDistinctProducts,
   getOrderRawByCode,
+  downloadWaybillPdf,
   healthCheck,
   acceptOrder,
   assembleOrder,
