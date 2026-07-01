@@ -579,12 +579,54 @@ async function runKaspiTransfer(options) {
     created++;
     processedThisRun.push(order.id);
 
+    // 30.06.2026: заказ №981145272 — 1С-документ создан успешно, а
+    // kaspi.assembleOrder упал с "404 Order not found", хотя сам заказ
+    // секундами ранее нормально нашёлся (тот же order.id) и состав успешно
+    // прочитался. Наиболее вероятная причина — гонка: за время создания
+    // документа в 1С (это сетевой запрос, может занять заметное время)
+    // статус заказа в Kaspi успел измениться (покупатель/Kaspi отменили
+    // заказ, либо статус поменяли вручную в личном кабинете) — и именно
+    // такую гонку Kaspi отдаёт как "404", а не как понятную ошибку перехода
+    // статуса. Защита в 2 шага:
+    //  1. До 3 попыток с паузой — закрывает по-настоящему временные сбои
+    //     (короткий сетевой/серверный сбой на стороне Kaspi).
+    //  2. Если все попытки провалились — перечитываем текущий статус заказа
+    //     в Kaspi (getOrderRawByCode) и добавляем его в сообщение об ошибке,
+    //     чтобы сразу было видно, ИЗМЕНИЛСЯ ли статус (тогда 1С-документ,
+    //     скорее всего, ошибочный и его нужно проверить вручную) или нет
+    //     (тогда заказ просто нужно вручную продвинуть в кабинете Kaspi —
+    //     1С-документ корректен, трогать его не нужно).
     let assembled = false;
-    try {
-      await kaspi.assembleOrder(order.id, numberOfSpace);
-      assembled = true;
-    } catch (e) {
-      assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка→Передача) — " + e.message);
+    let assembleErrorMessage = null;
+    const ASSEMBLE_RETRY_ATTEMPTS = 3;
+    const ASSEMBLE_RETRY_DELAY_MS = 3000;
+    for (let attempt = 0; attempt < ASSEMBLE_RETRY_ATTEMPTS && !assembled; attempt++) {
+      if (attempt > 0) await sleep(ASSEMBLE_RETRY_DELAY_MS);
+      try {
+        await kaspi.assembleOrder(order.id, numberOfSpace);
+        assembled = true;
+      } catch (e) {
+        assembleErrorMessage = e.message;
+      }
+    }
+    if (!assembled) {
+      let statusNote = "";
+      try {
+        const recheck = await kaspi.getOrderRawByCode(orderCode);
+        if (recheck.found && recheck.attributes) {
+          const curStatus = recheck.attributes.status;
+          if (curStatus && curStatus !== attrs.status) {
+            statusNote = " — статус заказа в Kaspi изменился с \"" + attrs.status + "\" на \"" + curStatus +
+              "\" за время обработки, похоже именно из-за этого Kaspi отказал. ПРОВЕРЬТЕ заказ в личном кабинете Kaspi и, если он отменён/изменён, проверьте также созданную Реализацию в 1С (Реализация №" + (docResult.number || "?") + ") — она может быть ошибочной.";
+          } else {
+            statusNote = " — статус в Kaspi не изменился (\"" + (curStatus || attrs.status) +
+              "\"), скорее всего заказ просто нужно продвинуть вручную в личном кабинете Kaspi (Упаковка→Передача, места: " + numberOfSpace + "). 1С-документ (Реализация №" + (docResult.number || "?") + ") в этом случае верный, его трогать не нужно.";
+          }
+        }
+      } catch (e) {
+        // диагностика необязательна — не мешаем основному потоку, если перепроверка статуса сама упала
+      }
+      assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка→Передача) после " + ASSEMBLE_RETRY_ATTEMPTS + " попыток — " + assembleErrorMessage + statusNote);
     }
 
     // Накладная формируется в Kaspi не мгновенно (бывает до 5 минут) —

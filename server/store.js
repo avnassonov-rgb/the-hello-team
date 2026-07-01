@@ -110,6 +110,21 @@ function setKaspiTransferRunMeta(patch) {
   const kt = Object.assign({}, DEFAULT_STATE.kaspiTransfer, state.kaspiTransfer || {}, patch);
   return patchState({ kaspiTransfer: kt });
 }
+// Снимает отметку "уже перенесён" с ОДНОГО заказа — нужно, когда Александр
+// вручную удалил/исправил документ Реализация в 1С и хочет НАМЕРЕННО
+// повторить перенос того же заказа (защита от задвоения из
+// project_kaspi_duplicate_realization_fix иначе всегда блокирует повтор).
+// Возвращает true, если заказ действительно был отмечен и отметка снята.
+function unmarkKaspiOrderProcessed(orderId) {
+  const state = readState();
+  const kt = Object.assign({}, DEFAULT_STATE.kaspiTransfer, state.kaspiTransfer || {});
+  const idStr = String(orderId);
+  const before = kt.processedOrderIds || [];
+  const list = before.filter((id) => id !== idStr);
+  const changed = list.length !== before.length;
+  if (changed) patchState({ kaspiTransfer: Object.assign({}, kt, { processedOrderIds: list }) });
+  return changed;
+}
 
 // ---- Сотрудники ----
 function genEmployeeId() {
@@ -206,6 +221,7 @@ module.exports = {
   appendBitrixEvent, getBitrixEvents,
   getCachedStage, setCachedStage, deleteCachedStage,
   getKaspiTransferState, isKaspiOrderProcessed, markKaspiOrdersProcessed, setKaspiTransferRunMeta,
+  unmarkKaspiOrderProcessed,
   getEmployees, getEmployeeRoles, saveEmployeeRoles, addEmployee, updateEmployee, deleteEmployee,
   findEmployeeChatIdsByRole, findEmployeeByTelegramId,
 };

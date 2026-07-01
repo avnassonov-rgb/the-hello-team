@@ -242,6 +242,28 @@ const server = http.createServer((req, res) => {
         .then((result) => sendJSON(res, 200, { ok: true, result: result }))
         .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
     }
+    if (pathname === "/api/kaspi-transfer/unmark" && req.method === "GET") {
+      // Снимает отметку "уже перенесён" с ОДНОГО заказа по его коду — нужно,
+      // когда Александр сам вручную удалил/исправил документ Реализация в 1С
+      // и хочет НАМЕРЕННО повторить перенос того же заказа. Без этого защита
+      // от задвоения (см. kaspiTransfer.js, project_kaspi_duplicate_realization_fix)
+      // всегда блокирует повторный перенос уже обработанного заказа.
+      const q = parsed.query || {};
+      if (!q.code) return sendJSON(res, 200, { ok: false, error: "bad_request", message: "укажите ?code=<номер заказа>" });
+      return kaspi.getOrderRawByCode(q.code)
+        .then((raw) => {
+          if (!raw.found) return sendJSON(res, 200, { ok: false, error: "not_found", message: "заказ с таким кодом не найден в Kaspi — проверьте код" });
+          const wasMarked = store.unmarkKaspiOrderProcessed(raw.orderId);
+          sendJSON(res, 200, {
+            ok: true,
+            wasMarked,
+            message: wasMarked
+              ? "отметка снята — заказ №" + q.code + " теперь можно перенести снова через обычный тест одного заказа"
+              : "заказ №" + q.code + " и не был отмечен как перенесённый — снимать нечего, можно сразу пробовать перенос",
+          });
+        })
+        .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
+    }
     if (pathname === "/api/kaspi-transfer/run" && req.method === "POST") {
       const q = parsed.query || {};
       const options = {};
