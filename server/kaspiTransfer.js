@@ -364,6 +364,18 @@ async function runKaspiTransfer(options) {
     }
   }
 
+  // Дедубликация: при постраничном обходе Kaspi один и тот же заказ может
+  // попасть на две страницы (API сдвигает страницы пока идут запросы) —
+  // убираем дубли по id ДО любой обработки.
+  {
+    const seenIds = new Set();
+    candidateOrders = candidateOrders.filter((o) => {
+      if (seenIds.has(o.id)) return false;
+      seenIds.add(o.id);
+      return true;
+    });
+  }
+
   const newOrders = candidateOrders.filter((o) => {
     const attrs = o.attributes || {};
     if (wantedStatus && attrs.status !== wantedStatus) return false;
@@ -379,7 +391,7 @@ async function runKaspiTransfer(options) {
   const processedThisRun = [];
   const dryRunPreview = [];
   // Пауза между заказами — защита от rate limit Kaspi.
-  // 2 сек × 100 заказов = ~3 мин; при 10-15 заказов/день = ~20 сек.
+  // 2 сек x 100 заказов = ~3 мин; при 10-15 заказов/день = ~20 сек.
   const INTER_ORDER_PAUSE_MS = 2000;
   let orderIndex = 0;
 
@@ -405,6 +417,13 @@ async function runKaspiTransfer(options) {
 
     const attrs = order.attributes || {};
     const orderCode = attrs.code || order.id;
+
+    // Страховка внутри цикла: если тот же заказ каким-то образом прошёл
+    // дедубликацию выше, не создаём вторую Реализацию.
+    if (!dryRun && processedThisRun.includes(order.id)) {
+      skippedAlready++;
+      continue;
+    }
 
     // Проверка в 1С: есть ли уже активная (не помеченная на удаление) Реализация.
     // Основная защита от дублей — работает даже после редеплоя (processedOrderIds
@@ -495,13 +514,13 @@ async function runKaspiTransfer(options) {
               "\" за время обработки, похоже именно из-за этого Kaspi отказал. ПРОВЕРЬТЕ заказ в личном кабинете Kaspi и, если он отменён/изменён, проверьте также созданную Реализацию в 1С (Реализация №" + (docResult.number || "?") + ") — она может быть ошибочной.";
           } else {
             statusNote = " — статус в Kaspi не изменился (\"" + (curStatus || attrs.status) +
-              "\"), скорее всего заказ просто нужно продвинуть вручную в личном кабинете Kaspi (Упаковка→Передача, места: " + numberOfSpace + "). 1С-документ (Реализация №" + (docResult.number || "?") + ") в этом случае верный, его трогать не нужно.";
+              "\"), скорее всего заказ просто нужно продвинуть вручную в личном кабинете Kaspi (Упаковка->Передача, места: " + numberOfSpace + "). 1С-документ (Реализация №" + (docResult.number || "?") + ") в этом случае верный, его трогать не нужно.";
           }
         }
       } catch (e) {
         // диагностика необязательна
       }
-      assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка→Передача) после " + ASSEMBLE_RETRY_ATTEMPTS + " попыток — " + assembleErrorMessage + statusNote);
+      assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка->Передача) после " + ASSEMBLE_RETRY_ATTEMPTS + " попыток — " + assembleErrorMessage + statusNote);
     }
 
     if (assembled) {
