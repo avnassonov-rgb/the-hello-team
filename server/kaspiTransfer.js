@@ -41,10 +41,6 @@ function sleep(ms) {
 }
 
 function statesFromEnv() {
-  // Подтверждено живым тестом: у этого магазина почти все заказы (100+) идут
-  // через доставку самого Kaspi ("KASPI_DELIVERY") — без неё в списке
-  // оказывалось лишь 2-3 случайных заказа из PICKUP/DELIVERY, а нужный заказ
-  // не находился вообще.
   const raw = process.env.KASPI_TRANSFER_STATES || "PICKUP,DELIVERY,KASPI_DELIVERY";
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
 }
@@ -52,9 +48,6 @@ function statusFromEnv() {
   return process.env.KASPI_TRANSFER_STATUS || "ACCEPTED_BY_MERCHANT";
 }
 
-// "Структурная единица" — точное имя реквизита в этой конфигурации 1С не
-// подтверждено живым тестом, поэтому resolveRefByName (как и createRealizationDocument)
-// пробует несколько вариантов названия справочника по очереди.
 const ORG_CATALOG_CANDIDATES = ["Catalog_СтруктурныеЕдиницы", "Catalog_Организации"];
 const ORG_NAME = process.env.KASPI_TRANSFER_ORG_NAME || "ИП Канапин А.Б.";
 
@@ -68,9 +61,6 @@ const SKLAD_CATALOG_CANDIDATES = ["Catalog_Склады"];
 const SKLAD_NAME = process.env.KASPI_TRANSFER_SKLAD_NAME || "Основной склад (г. Костанай)";
 
 const RESP_CATALOG_CANDIDATES = ["Catalog_Пользователи", "Catalog_ФизическиеЛица", "Catalog_Сотрудники"];
-// Точное название подтверждено Александром: "Каспи Магазин" (кириллицей).
-// Можно переопределить через переменную окружения, если в 1С когда-нибудь
-// изменится написание.
 const RESP_NAME_CANDIDATES = process.env.KASPI_TRANSFER_RESP_NAME
   ? [process.env.KASPI_TRANSFER_RESP_NAME]
   : ["Каспи Магазин"];
@@ -109,18 +99,13 @@ async function resolveFixedRefs() {
   };
 }
 
-// 1С-дата без таймзоны (локальное время Костаная, UTC+5 — без перевода,
-// сервер Render обычно работает в UTC, поэтому считаем смещение сами).
 function kostanayIsoNow() {
   const KOSTANAY_OFFSET_MIN = 5 * 60;
   const nowUtcMs = Date.now();
   const local = new Date(nowUtcMs + KOSTANAY_OFFSET_MIN * 60000);
-  return local.toISOString().slice(0, 19); // "YYYY-MM-DDTHH:MM:SS"
+  return local.toISOString().slice(0, 19);
 }
 
-// Состав заказа: код товара (через позицию → продукт) + кол-во + фактическая
-// цена за единицу (сколько реально заплатили за штуку, без скидки/с учётом —
-// totalPrice уже отражает фактическую сумму по позиции).
 async function loadOrderLines(orderId) {
   const entries = await kaspi.getOrderEntries(orderId);
   const lines = [];
@@ -144,32 +129,6 @@ async function loadOrderLines(orderId) {
   return lines;
 }
 
-// Разворачивает строки заказа Kaspi (код+кол-во+цена) в строки документа 1С
-// (Ref_Key номенклатуры + кол-во + цена), используя таблицу соответствия.
-// Цена за набор делится между его компонентами ПРОПОРЦИОНАЛЬНО их реальным
-// ценам с листа KASPI.KZ (priceTable.js), а не поровну — подтверждено
-// Александром 30.06.2026 на примере "Набор 4 в 1": продан за 3990тг, реальные
-// цены компонентов 1350/1490/990/1490 (сумма 5320) → доли 25.4%/28%/18.6%/28%
-// → этими долями делятся фактические 3990тг (а не поровну по 997.5).
-// Само деление берётся из заказа Kaspi (ol.unitPrice), а не из 1С/прайса —
-// сумма строк документа всегда равна тому, что реально заплатил покупатель.
-//   priceMap — артикул Kaspi -> цена продажи (из priceTable.loadPriceTable).
-//   nameToCode — название компонента в 1С -> его собственный артикул Kaspi
-//   (из mappingTable.loadMappingTable, по строкам типа "товар") — нужен,
-//   чтобы найти артикул компонента и по нему — его цену в priceMap.
-// Если для какого-то компонента набора реальная цена не нашлась (нет в
-// priceMap/nameToCode, например новый товар) — для ЭТОГО набора используется
-// старое поведение (деление поровну), чтобы перенос заказа не остановился;
-// причина попадает в priceBreakdown[].fallbackReason для проверки на dry-run.
-
-// Цена в документе 1С должна быть целым числом тенге (без копеек) — простое
-// округление каждой доли по отдельности (Math.round) почти всегда даёт сумму
-// строк НЕ равную фактической цене набора (теряется/добавляется 1-2 тенге
-// из-за округления нескольких чисел одновременно). Метод "наибольшего
-// остатка": округляем все значения вниз, а разницу между целевой суммой и
-// суммой округлённых вниз раздаём по 1 тенге компонентам с наибольшей
-// дробной частью — так сумма строк документа ВСЕГДА точно равна целевой
-// сумме (округлённой фактической цене набора/товара).
 function roundToIntegerSum(rawValues, target) {
   const targetInt = Math.round(target);
   const floors = rawValues.map(function (v) { return Math.floor(v); });
@@ -182,9 +141,6 @@ function roundToIntegerSum(rawValues, target) {
     result[order[k].i] += 1;
     remainder--;
   }
-  // remainder < 0 практически не должно случаться (targetInt — округление
-  // того же target, от которого считались rawValues), но на всякий случай
-  // отнимаем по 1 тенге у компонентов с наименьшей дробной частью.
   for (let k = order.length - 1; k >= 0 && remainder < 0; k--) {
     result[order[k].i] -= 1;
     remainder++;
@@ -194,7 +150,7 @@ function roundToIntegerSum(rawValues, target) {
 
 function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, nameToCode) {
   const docLines = [];
-  const priceBreakdown = []; // только по наборам (>1 компонент) — для dry-run/диагностики
+  const priceBreakdown = [];
   for (const ol of orderLines) {
     if (ol.error || !ol.code) {
       unresolved.push((ol.code ? "код " + ol.code : "позиция без кода") + ": " + (ol.error || "нет кода товара"));
@@ -207,9 +163,6 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, 
     }
     const componentCount = entry.components.length;
 
-    // shares: comp -> { refPrice, share } — заполняется только если для
-    // ВСЕХ компонентов набора нашлась реальная цена; иначе остаётся null и
-    // ниже используется деление поровну (fallback).
     let shares = null;
     let fallbackReason = null;
     if (componentCount > 1 && priceMap && nameToCode) {
@@ -232,19 +185,12 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, 
       }
     }
 
-    // "Сырые" (дробные) цены компонентов — по реальным долям или поровну —
-    // и их округление до целых тенге с точным сохранением суммы (см.
-    // roundToIntegerSum выше). Цель округления — ol.unitPrice (фактическая
-    // цена ЭТОЙ позиции заказа), а не каталожная/раздельная цена.
     const rawPrices = entry.components.map((comp) =>
       shares && shares.has(comp) ? ol.unitPrice * shares.get(comp).share : ol.unitPrice / componentCount
     );
     const roundedPrices = roundToIntegerSum(rawPrices, ol.unitPrice);
 
     let anyMissing = false;
-    // nomByName хранит {ref, unitKey} на товар (см. fetchNomenclatureByNameMap
-    // в oneC.js) — unitKey нужен в строке документа, иначе 1С падает с общей
-    // HTTP 500 при создании документа (нет единицы измерения).
     const lines = entry.components.map((comp, idx) => {
       const nom = nomByName.get(norm(comp.name1C));
       if (!nom || !nom.ref) anyMissing = true;
@@ -282,41 +228,6 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, 
   return { docLines, priceBreakdown };
 }
 
-// Считает количество мест (numberOfSpace) для ASSEMBLE по данным из таблицы
-// соответствия (колонка "максимальное кол-во товаров в коробке" — см.
-// mappingTable.js, entry.components[].boxCapacity). Правило подтверждено
-// Александром на примере "Универсальный набор спреев 4 шт" (4 разных спрея
-// по 1 шт в наборе, у каждого вместимость 4): "в коробку влазит максимум 4
-// единицы, в наборе ровно 4 единицы — значит это 1 полная коробка".
-//   1. Каждая строка заказа (товар или набор) раскладывается на компоненты
-//      из таблицы; количество единиц компонента = кол-во заказанного
-//      товара × кол-во этого компонента в одном наборе.
-//   2. Эти количества группируются по ВСЕМУ заказу не по конкретному
-//      товару, а по значению вместимости коробки — то есть разные товары
-//      с одинаковой вместимостью могут ехать в одной коробке вместе.
-//   3. В каждой группе: места = округление вверх(сумма количества / вместимость).
-//   4. Итог — сумма мест по всем группам (минимум 1).
-// Товары без записи в таблице соответствия считаются с вместимостью по
-// умолчанию 4 (см. mappingTable.DEFAULT-аналог — здесь захардкожено то же
-// число для согласованности, если строка вообще не нашлась в таблице).
-// detailed=true добавляет breakdown по компонентам и группам — только для
-// dryRun-предпросмотра, чтобы видеть ПОЧЕМУ получилось именно такое число
-// коробок (например, если вместимость у компонентов в таблице соответствия
-// разная — каждая отдельная вместимость это отдельная группа, они НЕ
-// объединяются между собой, даже если это компоненты одного набора).
-// Накладная: после ASSEMBLE Kaspi формирует её не всегда мгновенно — по словам
-// Александра иногда это занимает 2-3, а то и 5 минут. Раньше код ждал её
-// синхронно прямо внутри запроса переноса (4 попытки по 3 сек = ~9 сек
-// суммарно) — этого было мало, и реальные "просто не успела сформироваться"
-// случаи попадали в waybillFailed как ошибка, хотя ошибки никакой не было.
-// Теперь это отдельная фоновая задача: запускается без ожидания (не блокирует
-// ни тест-кнопку на дашборде, ни автоматический запуск по расписанию), сама
-// ждёт до ~6.5 минут (13 попыток по 30 сек) и отправляет накладную в Telegram,
-// когда она появится — без участия пользователя. Перенос и продвижение
-// заказа в Kaspi уже считаются успешными независимо от результата этой задачи;
-// если совсем не получится — теперь приходит предупреждение в Telegram (см.
-// ниже), а не только в логи сервера, которые пользователь не читает; накладную
-// всегда можно скачать вручную в кабинете Kaspi.
 async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
   const MAX_ATTEMPTS = 13;
   const DELAY_MS = 30000;
@@ -327,14 +238,14 @@ async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
       const raw = await kaspi.getOrderRawByCode(orderCode);
       waybillUrl = raw.found && raw.attributes && raw.attributes.kaspiDelivery && raw.attributes.kaspiDelivery.waybill;
     } catch (e) {
-      // временная ошибка сети/API — просто пробуем ещё раз на следующей попытке
+      // временная ошибка — пробуем ещё раз
     }
   }
   if (!waybillUrl) {
     const msg = "⚠️ Заказ №" + orderCode + ": накладная не появилась в Kaspi за " +
       Math.round((MAX_ATTEMPTS * DELAY_MS) / 60000) + " мин. Скачайте её вручную в кабинете Kaspi.";
     console.error("[kaspiTransfer] " + msg);
-    await telegram.send(msg); // видно в чате уведомлений, не только в логах сервера
+    await telegram.send(msg);
     return;
   }
 
@@ -348,12 +259,6 @@ async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
     return;
   }
 
-  // Ищем ВСЕХ сотрудников в роли "Зав.складом" в базе сотрудников
-  // (вкладка «Сотрудники» на дашборде) — если они привязаны (написали
-  // боту, админ вставил их Telegram ID), накладная уходит каждому из
-  // них, без необходимости менять переменные окружения на Render.
-  // Если таких сотрудников пока нет — остаётся старое поведение из
-  // telegram.js (TELEGRAM_WAREHOUSE_CHAT_ID, иначе TELEGRAM_CHAT_ID).
   const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
   const caption = "Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
   let sendResults;
@@ -375,11 +280,6 @@ async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
     );
   }
   if (failedSends.length === sendResults.length) {
-    // Ни одна попытка отправки документа не удалась (например, не настроен
-    // ни один Telegram-получатель, или у всех получателей сбой) — это
-    // самый опасный случай: раньше он был виден ТОЛЬКО в логах сервера,
-    // которые пользователь не читает. Шлём хотя бы текстовое предупреждение
-    // в основной чат уведомлений, чтобы проблема не осталась незамеченной.
     await telegram.send(
       "⚠️ Заказ №" + orderCode + ": накладная скачана из Kaspi, но НЕ доставлена в Telegram (" +
       ((failedSends[0] && failedSends[0].error) || "неизвестная ошибка") +
@@ -390,7 +290,7 @@ async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
 
 function computeNumberOfSpace(orderLines, mappingMap, detailed) {
   const FALLBACK_CAPACITY = 4;
-  const byCapacity = new Map(); // вместимость -> сумма количества
+  const byCapacity = new Map();
   const breakdown = [];
   for (const ol of orderLines) {
     if (ol.error || !ol.code) continue;
@@ -418,21 +318,12 @@ function computeNumberOfSpace(orderLines, mappingMap, detailed) {
   return detailed ? { spaces, breakdown, groups } : spaces;
 }
 
-// options.orderId  — строка: код заказа Kaspi (то, что видно в кабинете, напр.
-//                    "20013004") ИЛИ внутренний id заказа. Если задан — берём
-//                    ТОЛЬКО этот заказ (даже если он уже отмечен обработанным),
-//                    игнорируя остальные. Это безопасный режим теста на 1 заказе.
-// options.dryRun   — true: ничего не пишем (ни в 1С, ни в Kaspi, ни в store) —
-//                    только показываем, что было бы создано/отправлено.
 async function runKaspiTransfer(options) {
   const opts = options || {};
   const dryRun = !!opts.dryRun;
   const onlyOrderCode = opts.orderId ? String(opts.orderId).trim() : null;
 
   const { map: mappingMap, problems: mappingProblems, nameToCode } = await mappingTable.loadMappingTable();
-  // priceMap не критичен: если таблица цен недоступна/не настроена,
-  // buildDocLines сам откатывается на деление поровну (см. её комментарий) —
-  // перенос заказов не должен остановиться из-за этого.
   const { map: priceMap, problems: priceProblems } = await priceTable.loadPriceTable();
 
   const fixed = await resolveFixedRefs();
@@ -448,48 +339,31 @@ async function runKaspiTransfer(options) {
   let candidateOrders = [];
 
   if (onlyOrderCode) {
-    // Явный тест ОДНОГО заказа: берём его напрямую по коду (без постраничной
-    // выборки по state). Так надёжнее — у магазина бывает 100+ заказов в
-    // одном state (см. комментарий выше), а getOrders({state, pageSize:100})
-    // отдаёт только первую страницу, поэтому конкретный заказ мог туда не попасть
-    // даже если он реально существует и подходит по state/status (подтверждено
-    // живым тестом на заказе 981126374: state=KASPI_DELIVERY, status=ACCEPTED_BY_MERCHANT —
-    // всё совпадало, просто не попал в первые 100 заказов выборки).
     try {
       const raw = await kaspi.getOrderRawByCode(onlyOrderCode);
       if (raw.found) candidateOrders.push({ id: raw.orderId, attributes: raw.attributes });
     } catch (e) {
-      // не критично — ниже всё равно будет понятная ошибка "не найден"
+      // не критично
     }
   } else {
-    // Обычный запуск по расписанию: проходим ВСЕ страницы каждого state, а не
-    // только первую — иначе при 100+ заказах в state часть из них (особенно
-    // новые) могла бы остаться незамеченной.
+    // Для автозапуска берём только последние 3 дня — предотвращает навал
+    // старых заказов после паузы/редеплоя. Проверка 1С отсеет дубли.
+    const scheduledSinceMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
     for (const state of states) {
       let pageNumber = 0;
       const pageSize = 100;
       for (;;) {
-        const list = await kaspi.getOrders({ state, pageSize, pageNumber });
+        const list = await kaspi.getOrders({ state, pageSize, pageNumber, sinceMs: scheduledSinceMs });
         list.items.forEach((o) => candidateOrders.push(o));
         pageNumber++;
         const pageCount = list.pageCount;
         if (!list.items.length) break;
         if (pageCount != null && pageNumber >= pageCount) break;
-        if (pageNumber > 30) break; // защита от бесконечного цикла, если meta некорректна
+        if (pageNumber > 30) break;
       }
     }
   }
 
-  // Раньше для явного теста ОДНОГО заказа (onlyOrderCode) проверка "уже
-  // обработан" игнорировалась ВСЕГДА — это было нужно, чтобы можно было
-  // посмотреть dry-run предпросмотр даже для уже перенесённого заказа. Но
-  // та же логика разрешала и РЕАЛЬНЫЙ повторный перенос уже обработанного
-  // заказа — из-за этого 30.06.2026 случайный повторный клик по кнопке
-  // "перенести" создал вторую Реализацию в 1С на тот же заказ №981143381
-  // (см. project_kaspi_duplicate_realization_fix). Теперь "уже обработан"
-  // игнорируется ТОЛЬКО для dry-run (ничего не пишет, безопасно смотреть
-  // повторно) — для реального переноса защита от повтора всегда работает,
-  // даже если задан конкретный orderId.
   const newOrders = candidateOrders.filter((o) => {
     const attrs = o.attributes || {};
     if (wantedStatus && attrs.status !== wantedStatus) return false;
@@ -499,15 +373,15 @@ async function runKaspiTransfer(options) {
 
   let created = 0;
   let skippedAlready = onlyOrderCode ? 0 : candidateOrders.length - newOrders.length;
-  const unresolvedOrders = []; // заказы, которые не удалось перенести — НЕ отмечаются обработанными, будут повторены
-  const assembleFailed = []; // 1С документ создан, но Kaspi не подтвердил продвижение — отмечены обработанными, проблема только в Kaspi
-  // Накладные теперь отправляются фоновой задачей (fetchAndSendWaybillInBackground)
-  // и не блокируют этот запрос — этот массив оставлен для совместимости со
-  // старым форматом ответа, но обычно остаётся пустым; реальные проблемы с
-  // накладной видны в логах сервера, а не здесь.
+  const unresolvedOrders = [];
+  const assembleFailed = [];
   const waybillFailed = [];
   const processedThisRun = [];
-  const dryRunPreview = []; // только при dryRun: что было бы создано, без записи куда-либо
+  const dryRunPreview = [];
+  // Пауза между заказами — защита от rate limit Kaspi.
+  // 2 сек × 100 заказов = ~3 мин; при 10-15 заказов/день = ~20 сек.
+  const INTER_ORDER_PAUSE_MS = 2000;
+  let orderIndex = 0;
 
   if (onlyOrderCode && newOrders.length === 0) {
     const wasAlreadyProcessed = !dryRun && candidateOrders.some((o) => store.isKaspiOrderProcessed(o.id));
@@ -525,8 +399,26 @@ async function runKaspiTransfer(options) {
   }
 
   for (const order of newOrders) {
+    // Пауза перед каждым заказом кроме первого
+    if (!dryRun && orderIndex > 0) await sleep(INTER_ORDER_PAUSE_MS);
+    orderIndex++;
+
     const attrs = order.attributes || {};
     const orderCode = attrs.code || order.id;
+
+    // Проверка в 1С: есть ли уже активная (не помеченная на удаление) Реализация.
+    // Основная защита от дублей — работает даже после редеплоя (processedOrderIds
+    // сбрасывается, а 1С — постоянное хранилище). Если помечена на удаление — создаём новую.
+    if (!dryRun) {
+      const existingDoc = await oneC.findActiveRealizationByOrderCode(orderCode);
+      if (existingDoc.found) {
+        console.log("[kaspiTransfer] заказ №" + orderCode + " — Реализация №" + existingDoc.number + " уже есть в 1С, пропускаем");
+        skippedAlready++;
+        processedThisRun.push(order.id);
+        continue;
+      }
+    }
+
     let orderLines;
     try {
       orderLines = await loadOrderLines(order.id);
@@ -548,10 +440,10 @@ async function runKaspiTransfer(options) {
         orderCode,
         orderId: order.id,
         wouldCreateRealizationLines: docLines.map((l) => ({ nomKey: l.nomKey, qty: l.qty, price: l.price, unitKey: l.unitKey })),
-        priceBreakdown, // по каждому набору: реальные цены/доли компонентов, или причина отката на деление поровну
+        priceBreakdown,
         wouldAssembleNumberOfSpace: spaceDetail.spaces,
-        numberOfSpaceBreakdown: spaceDetail.breakdown, // по каждому компоненту: вместимость коробки и кол-во
-        numberOfSpaceGroups: spaceDetail.groups, // итоговые группы по вместимости: сколько коробок в каждой
+        numberOfSpaceBreakdown: spaceDetail.breakdown,
+        numberOfSpaceGroups: spaceDetail.groups,
       });
       continue;
     }
@@ -579,23 +471,6 @@ async function runKaspiTransfer(options) {
     created++;
     processedThisRun.push(order.id);
 
-    // 30.06.2026: заказ №981145272 — 1С-документ создан успешно, а
-    // kaspi.assembleOrder упал с "404 Order not found", хотя сам заказ
-    // секундами ранее нормально нашёлся (тот же order.id) и состав успешно
-    // прочитался. Наиболее вероятная причина — гонка: за время создания
-    // документа в 1С (это сетевой запрос, может занять заметное время)
-    // статус заказа в Kaspi успел измениться (покупатель/Kaspi отменили
-    // заказ, либо статус поменяли вручную в личном кабинете) — и именно
-    // такую гонку Kaspi отдаёт как "404", а не как понятную ошибку перехода
-    // статуса. Защита в 2 шага:
-    //  1. До 3 попыток с паузой — закрывает по-настоящему временные сбои
-    //     (короткий сетевой/серверный сбой на стороне Kaspi).
-    //  2. Если все попытки провалились — перечитываем текущий статус заказа
-    //     в Kaspi (getOrderRawByCode) и добавляем его в сообщение об ошибке,
-    //     чтобы сразу было видно, ИЗМЕНИЛСЯ ли статус (тогда 1С-документ,
-    //     скорее всего, ошибочный и его нужно проверить вручную) или нет
-    //     (тогда заказ просто нужно вручную продвинуть в кабинете Kaspi —
-    //     1С-документ корректен, трогать его не нужно).
     let assembled = false;
     let assembleErrorMessage = null;
     const ASSEMBLE_RETRY_ATTEMPTS = 3;
@@ -624,15 +499,11 @@ async function runKaspiTransfer(options) {
           }
         }
       } catch (e) {
-        // диагностика необязательна — не мешаем основному потоку, если перепроверка статуса сама упала
+        // диагностика необязательна
       }
       assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка→Передача) после " + ASSEMBLE_RETRY_ATTEMPTS + " попыток — " + assembleErrorMessage + statusNote);
     }
 
-    // Накладная формируется в Kaspi не мгновенно (бывает до 5 минут) —
-    // запускаем ожидание/отправку в фоне, не блокируя ответ переноса (см.
-    // fetchAndSendWaybillInBackground выше). Перенос и продвижение заказа
-    // уже считаются успешными; накладная придёт в Telegram отдельно.
     if (assembled) {
       fetchAndSendWaybillInBackground(orderCode, numberOfSpace).catch((e) =>
         console.error("[kaspiTransfer] фоновая отправка накладной для заказа №" + orderCode + " упала: " + e.message)
@@ -662,17 +533,8 @@ async function runKaspiTransfer(options) {
   return { summary, errorText: errorParts.length > 0 ? errorParts.join(" || ") : null };
 }
 
-// Защита от двойного клика/двух почти одновременных запросов: пока один
-// перенос выполняется, второй вызов runKaspiTransferSafe (хоть с дашборда,
-// хоть от планировщика) сразу отказывает, а не выполняется параллельно.
-// Без этого два запроса могли успеть оба пройти проверку "уже обработан" до
-// того, как первый из них успеет её записать, и оба создать Реализацию на
-// один и тот же заказ — ровно так задвоился заказ №981143381 30.06.2026.
 let transferInProgress = false;
 
-// options.orderId/options.dryRun — см. runKaspiTransfer(). Тестовые запуски
-// (с orderId и/или dryRun) НЕ трогают lastRun-статус мониторинга и НЕ шлют
-// Telegram-уведомление — чтобы тест на 1 заказе не сбивал боевой мониторинг.
 async function runKaspiTransferSafe(options) {
   const opts = options || {};
   const isTest = !!(opts.orderId || opts.dryRun);
