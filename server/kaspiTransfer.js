@@ -391,8 +391,8 @@ async function runKaspiTransfer(options) {
   const processedThisRun = [];
   const dryRunPreview = [];
   // Пауза между заказами — защита от rate limit Kaspi.
-  // 2 сек x 100 заказов = ~3 мин; при 10-15 заказов/день = ~20 сек.
-  const INTER_ORDER_PAUSE_MS = 2000;
+  // 4 сек x 100 заказов = ~7 мин; при 10-15 заказов/день = ~40 сек.
+  const INTER_ORDER_PAUSE_MS = 4000;
   let orderIndex = 0;
 
   if (onlyOrderCode && newOrders.length === 0) {
@@ -490,10 +490,13 @@ async function runKaspiTransfer(options) {
     created++;
     processedThisRun.push(order.id);
 
+    // Дополнительная пауза перед ASSEMBLE — снижаем нагрузку на Kaspi API
+    await sleep(1000);
+
     let assembled = false;
     let assembleErrorMessage = null;
     const ASSEMBLE_RETRY_ATTEMPTS = 3;
-    const ASSEMBLE_RETRY_DELAY_MS = 3000;
+    const ASSEMBLE_RETRY_DELAY_MS = 5000;
     for (let attempt = 0; attempt < ASSEMBLE_RETRY_ATTEMPTS && !assembled; attempt++) {
       if (attempt > 0) await sleep(ASSEMBLE_RETRY_DELAY_MS);
       try {
