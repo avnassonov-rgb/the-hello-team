@@ -338,9 +338,29 @@ async function runKaspiTransfer(options) {
 
   let candidateOrders = [];
 
+  // Обёртка с повторами для запросов к Kaspi: если таймаут или обрыв
+  // соединения — ждём 60 сек и повторяем (до 3 попыток суммарно).
+  async function kaspiWithRetry(fn) {
+    const MAX_ATTEMPTS = 3;
+    const RETRY_PAUSE_MS = 60 * 1000;
+    let lastErr;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      try {
+        return await fn();
+      } catch (e) {
+        lastErr = e;
+        const isConnErr = /таймаут|соединени|ECONNRESET|ENOTFOUND|ETIMEDOUT/i.test(e.message);
+        if (!isConnErr || attempt === MAX_ATTEMPTS - 1) throw e;
+        console.warn("[kaspiTransfer] Kaspi API недоступен (попытка " + (attempt + 1) + "), ждём 60 сек...");
+        await sleep(RETRY_PAUSE_MS);
+      }
+    }
+    throw lastErr;
+  }
+
   if (onlyOrderCode) {
     try {
-      const raw = await kaspi.getOrderRawByCode(onlyOrderCode);
+      const raw = await kaspiWithRetry(() => kaspi.getOrderRawByCode(onlyOrderCode));
       if (raw.found) candidateOrders.push({ id: raw.orderId, attributes: raw.attributes });
     } catch (e) {
       // не критично
@@ -353,7 +373,7 @@ async function runKaspiTransfer(options) {
       let pageNumber = 0;
       const pageSize = 100;
       for (;;) {
-        const list = await kaspi.getOrders({ state, pageSize, pageNumber, sinceMs: scheduledSinceMs });
+        const list = await kaspiWithRetry(() => kaspi.getOrders({ state, pageSize, pageNumber, sinceMs: scheduledSinceMs }));
         list.items.forEach((o) => candidateOrders.push(o));
         pageNumber++;
         const pageCount = list.pageCount;
@@ -523,6 +543,12 @@ async function runKaspiTransfer(options) {
       } catch (e) {
         // диагностика необязательна
       }
+      // Диагностика: логируем что именно отправляем в Kaspi при ASSEMBLE
+      console.warn("[kaspiTransfer][diag] assembleFailed заказ №" + orderCode +
+        " orderId=" + order.id +
+        " deliveryType=" + (attrs.deliveryType || "?") +
+        " kaspiDelivery=" + JSON.stringify(attrs.kaspiDelivery || null) +
+        " err=" + assembleErrorMessage);
       assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка->Передача) после " + ASSEMBLE_RETRY_ATTEMPTS + " попыток — " + assembleErrorMessage + statusNote);
     }
 
@@ -585,20 +611,29 @@ async function runKaspiTransferSafe(options) {
         lastRunError: errorText,
         lastRunSummary: summary,
       });
-      telegram.notifyIfChanged(store, "kaspi_transfer", "Перенос заказов Kaspi → 1С", errorText)
-        .catch((e) => console.error("[telegram] notifyIfChanged упал: " + e.message));
+      telegram.notifyIfChanged(
+        store,
+        "kaspiTransfer",
+        "Перенос заказов Kaspi → 1С",
+        errorText || null
+      ).catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
     }
-    return { ok: true, summary, errorText };
+    return { ok: true, summary };
   } catch (e) {
-    console.error((isTest ? "[kaspiTransfer][тест] " : "[kaspiTransfer] ") + "перенос упал: " + e.message);
+    console.error("[kaspiTransfer] критическая ошибка: " + e.message);
     if (!isTest) {
       store.setKaspiTransferRunMeta({
         lastRunAt: new Date().toISOString(),
         lastRunOk: false,
         lastRunError: e.message,
+        lastRunSummary: null,
       });
-      telegram.notifyIfChanged(store, "kaspi_transfer", "Перенос заказов Kaspi → 1С", e.message)
-        .catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
+      telegram.notifyIfChanged(
+        store,
+        "kaspiTransfer",
+        "Перенос заказов Kaspi → 1С",
+        e.message
+      ).catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
     }
     return { ok: false, error: e.message };
   } finally {
@@ -606,4 +641,4 @@ async function runKaspiTransferSafe(options) {
   }
 }
 
-module.exports = { runKaspiTransfer, runKaspiTransferSafe, resolveFixedRefs };
+module.exports = { runKaspiTransferSafe };
