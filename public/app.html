@@ -89,6 +89,30 @@
       </div>
       <pre id="kaspiTestResult" class="hidden" style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:16px;margin-top:16px;font-size:13px;line-height:1.5;"></pre>
     </div>
+
+    <div class="card" style="margin-top:var(--gap);">
+      <div class="plan-head">
+        <h2><span class="pill-tag">Kaspi CARGO — сессия</span> <span class="sub">— обновите куки когда придёт Telegram-уведомление об истечении сессии</span></h2>
+      </div>
+      <p class="mgr-note">CARGO-заказы (крупногабаритный товар) требуют куки из браузера. Они действуют ~30 дней. Когда истекут — придёт Telegram-сообщение. Тогда: войдите в кабинет Kaspi → F12 → Application → Cookies → <b>https://mc.shop.kaspi.kz</b> → скопируйте <b>mc-session</b> и <b>mc-sid</b> сюда. После сохранения можно сразу запустить перенос кнопкой ниже — ждать 08:00 или 13:10 не нужно.</p>
+      <div id="kaspiSessionStatus" style="margin-bottom:12px;font-size:13px;color:#888;"></div>
+      <div style="display:flex;flex-direction:column;gap:10px;max-width:600px;">
+        <label style="font-size:13px;font-weight:600;color:var(--ink);">mc-session
+          <input type="password" id="kaspiMcSession" placeholder="Вставьте значение куки mc-session" autocomplete="off"
+            style="display:block;width:100%;margin-top:4px;padding:10px 14px;border:1.5px solid #e0d9cf;border-radius:12px;font-size:13px;font-family:monospace;background:#fff;outline:none;">
+        </label>
+        <label style="font-size:13px;font-weight:600;color:var(--ink);">mc-sid <span style="font-weight:400;color:#aaa;">(необязательно)</span>
+          <input type="password" id="kaspiMcSid" placeholder="Вставьте значение куки mc-sid" autocomplete="off"
+            style="display:block;width:100%;margin-top:4px;padding:10px 14px;border:1.5px solid #e0d9cf;border-radius:12px;font-size:13px;font-family:monospace;background:#fff;outline:none;">
+        </label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;">
+          <button class="pbtn" id="kaspiSaveSessionBtn" type="button">Сохранить куки</button>
+          <button class="pbtn" id="kaspiRunTransferBtn" type="button" style="background:var(--pink);color:#fff;border-color:var(--pink);">▶ Запустить перенос сейчас</button>
+        </div>
+      </div>
+      <pre id="kaspiSessionResult" class="hidden" style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:16px;margin-top:16px;font-size:13px;line-height:1.5;"></pre>
+    </div>
+
     <div class="banner-wrap no-print" style="margin-top:var(--gap);">
       <img class="banner-img" src="/img/banner.png" alt="THE HELLO Team">
     </div>
