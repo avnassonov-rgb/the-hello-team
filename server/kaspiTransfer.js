@@ -566,6 +566,7 @@ async function runKaspiTransfer(options) {
       "[kaspiTransfer][diag] ASSEMBLE заказ №" + orderCode +
       " orderId=" + order.id +
       " state=" + orderState +
+      " status=" + (attrs.status || "null") +
       " spaces=" + numberOfSpace +
       " planDate=" + (_kd.courierTransmissionPlanningDate || "null") +
       " waybill=" + (_kd.waybill ? "yes" : "null")
@@ -698,6 +699,7 @@ async function runKaspiTransferSafe(options) {
   } finally {
     transferInProgress = false;
   }
+
 }
 
 module.exports = { runKaspiTransferSafe };
