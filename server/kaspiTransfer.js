@@ -559,8 +559,17 @@ async function runKaspiTransfer(options) {
     // Дополнительная пауза перед ASSEMBLE — снижаем нагрузку на Kaspi API
     await sleep(1000);
 
-    // Суммарное количество товаров в заказе — нужно для CARGO API.
-    const totalOrderQty = orderLines.reduce(function (s, ol) { return s + (ol.qty || 0); }, 0) || 1;
+    // Диагностический лог перед каждым ASSEMBLE — помогает найти причину 404.
+    // Видно в Render Logs. Убрать после того как причина 404 установлена.
+    const _kd = attrs.kaspiDelivery || {};
+    console.log(
+      "[kaspiTransfer][diag] ASSEMBLE заказ №" + orderCode +
+      " orderId=" + order.id +
+      " state=" + orderState +
+      " spaces=" + numberOfSpace +
+      " planDate=" + (_kd.courierTransmissionPlanningDate || "null") +
+      " waybill=" + (_kd.waybill ? "yes" : "null")
+    );
 
     let assembled = false;
     let assembleErrorMessage = null;
@@ -573,59 +582,32 @@ async function runKaspiTransfer(options) {
         assembled = true;
       } catch (e) {
         assembleErrorMessage = e.message;
-        // 404 "Order not found" от стандартного API означает CARGO-заказ —
-        // повторять стандартный вызов бесполезно, сразу пробуем CARGO endpoint.
-        if (/\[404\]/.test(e.message)) break;
-      }
-    }
-
-    // Если стандартный ASSEMBLE вернул 404 — пробуем CARGO endpoint
-    // (POST mc.shop.kaspi.kz/mc/api/order/cargo/assembled).
-    // Требует KASPI_MERCHANT_ID + KASPI_MC_SESSION в env vars Render.
-    if (!assembled && /\[404\]/.test(assembleErrorMessage || "")) {
-      try {
-        await kaspi.assembleCargoOrder(orderCode, numberOfSpace, totalOrderQty);
-        assembled = true;
-        assembleErrorMessage = null;
-        console.log("[kaspiTransfer] CARGO assembled заказ №" + orderCode + " (qty=" + totalOrderQty + " мест=" + numberOfSpace + ")");
-      } catch (cargoErr) {
-        assembleErrorMessage = cargoErr.message;
+        if (/\[404\]/.test(e.message)) break; // повтор бесполезен — выходим сразу
       }
     }
 
     if (!assembled) {
       let statusNote = "";
-      const isCargo = /\[404\]|CARGO/.test(assembleErrorMessage || "");
-      if (isCargo) {
-        statusNote = " — это CARGO-заказ (Kaspi Доставка грузовой), для него нужны отдельные куки кабинета. " +
-          "Добавьте KASPI_MERCHANT_ID, KASPI_MC_SESSION, KASPI_MC_SID в Render — и следующий запуск продвинет его автоматически. " +
-          "Пока что продвиньте вручную: кабинет Kaspi → Упаковка → выберите заказ → «Сформировать накладные». " +
-          "Реализация №" + (docResult.number || "?") + " в 1С верная, трогать не нужно.";
-      } else {
-        try {
-          const recheck = await kaspi.getOrderRawByCode(orderCode);
-          if (recheck.found && recheck.attributes) {
-            const curStatus = recheck.attributes.status;
-            if (curStatus && curStatus !== attrs.status) {
-              statusNote = " — статус заказа в Kaspi изменился с \"" + attrs.status + "\" на \"" + curStatus +
-                "\" за время обработки, похоже именно из-за этого Kaspi отказал. ПРОВЕРЬТЕ заказ в личном кабинете Kaspi и, если он отменён/изменён, проверьте также созданную Реализацию в 1С (Реализация №" + (docResult.number || "?") + ") — она может быть ошибочной.";
-            } else {
-              statusNote = " — статус в Kaspi не изменился (\"" + (curStatus || attrs.status) +
-                "\"), добавлен в очередь авто-повтора: следующий запуск (08:45 или 13:15) попробует снова. " +
-                "Если нужно срочно — продвиньте вручную в кабинете Kaspi (Упаковка → Передача, мест: " + numberOfSpace + "). " +
-                "Реализация №" + (docResult.number || "?") + " в 1С верная, трогать не нужно.";
-            }
+      try {
+        const recheck = await kaspi.getOrderRawByCode(orderCode);
+        if (recheck.found && recheck.attributes) {
+          const curStatus = recheck.attributes.status;
+          if (curStatus && curStatus !== attrs.status) {
+            statusNote = " — статус заказа в Kaspi изменился с \"" + attrs.status + "\" на \"" + curStatus +
+              "\" за время обработки. ПРОВЕРЬТЕ заказ в личном кабинете Kaspi и созданную Реализацию в 1С №" + (docResult.number || "?") + " — она может быть ошибочной.";
+          } else {
+            statusNote = " — добавлен в очередь авто-повтора: следующий запуск (08:45 или 13:15) попробует снова. " +
+              "Если нужно срочно — продвиньте вручную в кабинете Kaspi (Упаковка → Передача, мест: " + numberOfSpace + "). " +
+              "Реализация №" + (docResult.number || "?") + " в 1С верная, трогать не нужно.";
           }
-        } catch (e) {
-          // диагностика необязательна
         }
+      } catch (e) {
+        // диагностика необязательна
       }
       console.warn("[kaspiTransfer] assembleFailed заказ №" + orderCode + " orderState=" + orderState + " err=" + assembleErrorMessage);
       assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но не продвинута в Kaspi — " + assembleErrorMessage + statusNote);
-      // Добавляем в очередь авто-повтора (не добавляем CARGO-заказы — у них другой эндпоинт)
-      if (!isCargo) {
-        store.addToKaspiAssemblyPending({ orderId: order.id, orderCode, numberOfSpace });
-      }
+      // Добавляем в очередь авто-повтора — следующий запуск попробует снова
+      store.addToKaspiAssemblyPending({ orderId: order.id, orderCode, numberOfSpace });
     }
 
     if (assembled) {
