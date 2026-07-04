@@ -242,6 +242,25 @@ const server = http.createServer((req, res) => {
         .then((result) => sendJSON(res, 200, { ok: true, result: result }))
         .catch((err) => sendJSON(res, 200, { ok: false, error: "kaspi_error", message: err.message }));
     }
+    if (pathname === "/api/kaspi/cargo-session" && req.method === "GET") {
+      const sess = store.getKaspiCargoSession();
+      return sendJSON(res, 200, { ok: true, hasSession: !!(sess && sess.mcSession), updatedAt: (sess && sess.updatedAt) || null });
+    }
+    if (pathname === "/api/kaspi/cargo-session" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        try {
+          const d = JSON.parse(body || "{}");
+          if (!d.mcSession) return sendJSON(res, 400, { ok: false, error: "mcSession обязателен" });
+          store.setKaspiCargoSession(String(d.mcSession).trim(), String(d.mcSid || "").trim());
+          sendJSON(res, 200, { ok: true });
+        } catch (e) {
+          sendJSON(res, 400, { ok: false, error: e.message });
+        }
+      });
+      return;
+    }
     if (pathname === "/api/kaspi-transfer/unmark" && req.method === "GET") {
       // Снимает отметку "уже перенесён" с ОДНОГО заказа по его коду — нужно,
       // когда Александр сам вручную удалил/исправил документ Реализация в 1С

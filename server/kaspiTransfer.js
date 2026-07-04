@@ -374,7 +374,9 @@ async function runKaspiTransfer(options) {
       const pageSize = 100;
       for (;;) {
         const list = await kaspiWithRetry(() => kaspi.getOrders({ state, pageSize, pageNumber, sinceMs: scheduledSinceMs }));
-        list.items.forEach((o) => candidateOrders.push(o));
+        // Тегируем заказ состоянием очереди, из которой он пришёл.
+        // Kaspi не всегда возвращает state в атрибутах — полагаемся на параметр фильтра.
+        list.items.forEach((o) => candidateOrders.push(Object.assign({ _fromState: state }, o)));
         pageNumber++;
         const pageCount = list.pageCount;
         if (!list.items.length) break;
@@ -415,6 +417,49 @@ async function runKaspiTransfer(options) {
   const INTER_ORDER_PAUSE_MS = 4000;
   let orderIndex = 0;
 
+  // ── Повторный ASSEMBLE для заказов из предыдущих запусков ──────────────────
+  // Когда первый ASSEMBLE падает с 404, заказ уже помечен обработанным (Реализация
+  // создана) и в следующие запуски не попадает в newOrders. Очередь assemblyPending
+  // хранит такие заказы и позволяет повторить ASSEMBLE при следующем запуске.
+  // Здесь мы пробуем повторить ТОЛЬКО если это не ручной запуск одного заказа.
+  if (!onlyOrderCode && !dryRun) {
+    const assemblyPending = store.getKaspiAssemblyPending();
+    const pendingIds = new Set(newOrders.map((o) => o.id)); // не повторяем то, что уже в этом запуске
+    for (const p of assemblyPending) {
+      if (pendingIds.has(p.orderId)) continue;
+      await sleep(INTER_ORDER_PAUSE_MS);
+      try {
+        // Проверяем, что заказ ещё в статусе "Упаковка" (ACCEPTED_BY_MERCHANT).
+        // Если пользователь уже продвинул его вручную — убираем из очереди.
+        const raw = await kaspiWithRetry(() => kaspi.getOrderRawByCode(p.orderCode));
+        if (!raw.found) {
+          store.removeFromKaspiAssemblyPending(p.orderId);
+          console.log("[kaspiTransfer] повтор ASSEMBLE: заказ №" + p.orderCode + " не найден в Kaspi → убираем из очереди");
+          continue;
+        }
+        const curStatus = raw.attributes && raw.attributes.status;
+        if (curStatus !== "ACCEPTED_BY_MERCHANT") {
+          store.removeFromKaspiAssemblyPending(p.orderId);
+          console.log("[kaspiTransfer] повтор ASSEMBLE: заказ №" + p.orderCode + " уже в статусе «" + curStatus + "» → убираем из очереди");
+          continue;
+        }
+        // Пробуем собрать ещё раз
+        await sleep(1000);
+        await kaspi.assembleOrder(p.orderId, p.orderCode, p.numberOfSpace);
+        store.removeFromKaspiAssemblyPending(p.orderId);
+        console.log("[kaspiTransfer] повтор ASSEMBLE успешен: заказ №" + p.orderCode);
+        // Отправляем накладную в фоне
+        fetchAndSendWaybillInBackground(p.orderCode, p.numberOfSpace).catch((e) =>
+          console.error("[kaspiTransfer] фоновая отправка накладной (повтор) №" + p.orderCode + ": " + e.message)
+        );
+      } catch (e) {
+        console.warn("[kaspiTransfer] повтор ASSEMBLE не удался: заказ №" + p.orderCode + " err=" + e.message);
+        // Оставляем в очереди — попробуем в следующий запуск
+      }
+    }
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   if (onlyOrderCode && newOrders.length === 0) {
     const wasAlreadyProcessed = !dryRun && candidateOrders.some((o) => store.isKaspiOrderProcessed(o.id));
     if (wasAlreadyProcessed) {
@@ -437,6 +482,7 @@ async function runKaspiTransfer(options) {
 
     const attrs = order.attributes || {};
     const orderCode = attrs.code || order.id;
+    const orderState = order._fromState || (attrs.state) || "KASPI_DELIVERY";
 
     // Страховка внутри цикла: если тот же заказ каким-то образом прошёл
     // дедубликацию выше, не создаём вторую Реализацию.
@@ -565,18 +611,25 @@ async function runKaspiTransfer(options) {
                 "\" за время обработки, похоже именно из-за этого Kaspi отказал. ПРОВЕРЬТЕ заказ в личном кабинете Kaspi и, если он отменён/изменён, проверьте также созданную Реализацию в 1С (Реализация №" + (docResult.number || "?") + ") — она может быть ошибочной.";
             } else {
               statusNote = " — статус в Kaspi не изменился (\"" + (curStatus || attrs.status) +
-                "\"), скорее всего заказ просто нужно продвинуть вручную в личном кабинете Kaspi (Упаковка->Передача, места: " + numberOfSpace + "). 1С-документ (Реализация №" + (docResult.number || "?") + ") в этом случае верный, его трогать не нужно.";
+                "\"), добавлен в очередь авто-повтора: следующий запуск (08:45 или 13:15) попробует снова. " +
+                "Если нужно срочно — продвиньте вручную в кабинете Kaspi (Упаковка → Передача, мест: " + numberOfSpace + "). " +
+                "Реализация №" + (docResult.number || "?") + " в 1С верная, трогать не нужно.";
             }
           }
         } catch (e) {
           // диагностика необязательна
         }
       }
-      console.warn("[kaspiTransfer] assembleFailed заказ №" + orderCode + " err=" + assembleErrorMessage);
+      console.warn("[kaspiTransfer] assembleFailed заказ №" + orderCode + " orderState=" + orderState + " err=" + assembleErrorMessage);
       assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но не продвинута в Kaspi — " + assembleErrorMessage + statusNote);
+      // Добавляем в очередь авто-повтора (не добавляем CARGO-заказы — у них другой эндпоинт)
+      if (!isCargo) {
+        store.addToKaspiAssemblyPending({ orderId: order.id, orderCode, numberOfSpace });
+      }
     }
 
     if (assembled) {
+      store.removeFromKaspiAssemblyPending(order.id); // на случай если был в очереди с прошлого запуска
       fetchAndSendWaybillInBackground(orderCode, numberOfSpace).catch((e) =>
         console.error("[kaspiTransfer] фоновая отправка накладной для заказа №" + orderCode + " упала: " + e.message)
       );

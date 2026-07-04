@@ -361,11 +361,14 @@ async function assembleOrder(orderId, orderCode, numberOfSpace, timeoutMs) {
 //
 // quantity — суммарное количество товаров в заказе (сумма qty всех позиций).
 async function assembleCargoOrder(orderCode, numberOfSpace, totalQuantity, timeoutMs) {
+  // Сессия: приоритет — store (кнопка в дашборде), fallback — env vars (Render)
+  const store = require("./store");
+  const saved = store.getKaspiCargoSession();
   const merchantId = process.env.KASPI_MERCHANT_ID || "";
-  const mcSession = process.env.KASPI_MC_SESSION || "";
-  const mcSid = process.env.KASPI_MC_SID || "";
+  const mcSession = (saved && saved.mcSession) || process.env.KASPI_MC_SESSION || "";
+  const mcSid = (saved && saved.mcSid) || process.env.KASPI_MC_SID || "";
   if (!merchantId || !mcSession) {
-    throw new Error("Не заданы KASPI_MERCHANT_ID / KASPI_MC_SESSION — CARGO заказ нельзя продвинуть автоматически (добавьте переменные окружения в Render)");
+    throw new Error("Не заданы KASPI_MERCHANT_ID / KASPI_MC_SESSION — CARGO заказ нельзя продвинуть автоматически (добавьте куки в дашборде, вкладка Kaspi, или через Render)");
   }
   const bodyObj = {
     cargos: [{ orderCode: String(orderCode), newCargoSpace: numberOfSpace || 1, quantity: totalQuantity || 1 }],
@@ -393,7 +396,7 @@ async function assembleCargoOrder(orderCode, numberOfSpace, totalQuantity, timeo
       res.on("end", () => {
         const raw = Buffer.concat(chunks).toString("utf8");
         if (res.statusCode === 401 || res.statusCode === 403) {
-          return reject(new Error("Kaspi CARGO API [" + res.statusCode + "]: сессия истекла — обновите KASPI_MC_SESSION в Render"));
+          return reject(new Error("Kaspi CARGO API [" + res.statusCode + "]: сессия истекла — обновите куки в дашборде (вкладка Kaspi → «Обновить сессию CARGO»)"));
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
           return reject(new Error("Kaspi CARGO API [" + res.statusCode + "]: " + raw.slice(0, 300)));

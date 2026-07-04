@@ -26,6 +26,12 @@ const DEFAULT_STATE = {
   bitrixEvents: [], // [{ time, entityType, entityId, type, fromStage, toStage, actorId, actorName }]
   bitrixStageCache: {}, // "deal:123" -> текущий STAGE_ID/STATUS_ID, известный с прошлого события
   notifyState: {}, // "onec"/"bitrix"/"kaspi" -> текст последней отправленной в Telegram ошибки (или null)
+  // ---- Kaspi CARGO сессия (куки mc-session / mc-sid, обновляются через дашборд) ----
+  kaspiCargoSession: { mcSession: null, mcSid: null, updatedAt: null },
+  // ---- Очередь повторного ASSEMBLE: заказы, у которых Реализация создана в 1С,
+  //      но Kaspi API вернул ошибку при первом ASSEMBLE. Каждый запуск повторяет
+  //      попытку до тех пор, пока не успешно или пока заказ не сменит статус. ----
+  kaspiAssemblyPending: [], // [{ orderId, orderCode, numberOfSpace, addedAt }]
   // ---- Kaspi → 1С перенос заказов (Реализация) ----
   kaspiTransfer: {
     processedOrderIds: [], // Kaspi orderId, уже превращённые в Реализацию — защита от повторов при двух запусках в день
@@ -85,6 +91,42 @@ function deleteCachedStage(entityType, entityId) {
   const cache = Object.assign({}, state.bitrixStageCache || {});
   delete cache[bitrixCacheKey(entityType, entityId)];
   return patchState({ bitrixStageCache: cache });
+}
+
+// ---- Kaspi CARGO сессия ----
+function getKaspiCargoSession() {
+  const state = readState();
+  return state.kaspiCargoSession || { mcSession: null, mcSid: null, updatedAt: null };
+}
+function setKaspiCargoSession(mcSession, mcSid) {
+  return patchState({ kaspiCargoSession: { mcSession: mcSession || null, mcSid: mcSid || null, updatedAt: new Date().toISOString() } });
+}
+
+// ---- Очередь повторного ASSEMBLE ----
+const MAX_ASSEMBLY_PENDING = 500;
+function getKaspiAssemblyPending() {
+  const state = readState();
+  return Array.isArray(state.kaspiAssemblyPending) ? state.kaspiAssemblyPending : [];
+}
+function addToKaspiAssemblyPending(entry) {
+  const state = readState();
+  const list = Array.isArray(state.kaspiAssemblyPending) ? state.kaspiAssemblyPending.slice() : [];
+  const idx = list.findIndex((e) => e.orderId === entry.orderId);
+  if (idx !== -1) list.splice(idx, 1);
+  list.push({
+    orderId: entry.orderId,
+    orderCode: entry.orderCode,
+    numberOfSpace: entry.numberOfSpace,
+    addedAt: new Date().toISOString(),
+  });
+  while (list.length > MAX_ASSEMBLY_PENDING) list.shift();
+  return patchState({ kaspiAssemblyPending: list });
+}
+function removeFromKaspiAssemblyPending(orderId) {
+  const state = readState();
+  const list = (Array.isArray(state.kaspiAssemblyPending) ? state.kaspiAssemblyPending : [])
+    .filter((e) => e.orderId !== orderId);
+  return patchState({ kaspiAssemblyPending: list });
 }
 
 // ---- Kaspi → 1С перенос: дедупликация и статус последнего запуска ----
@@ -220,6 +262,8 @@ module.exports = {
   getBitrixApp, setBitrixApp,
   appendBitrixEvent, getBitrixEvents,
   getCachedStage, setCachedStage, deleteCachedStage,
+  getKaspiCargoSession, setKaspiCargoSession,
+  getKaspiAssemblyPending, addToKaspiAssemblyPending, removeFromKaspiAssemblyPending,
   getKaspiTransferState, isKaspiOrderProcessed, markKaspiOrdersProcessed, setKaspiTransferRunMeta,
   unmarkKaspiOrderProcessed,
   getEmployees, getEmployeeRoles, saveEmployeeRoles, addEmployee, updateEmployee, deleteEmployee,
