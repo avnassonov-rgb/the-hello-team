@@ -347,6 +347,67 @@ async function assembleOrder(orderId, orderCode, numberOfSpace, timeoutMs) {
   return setOrderStatus(orderId, attrs, timeoutMs);
 }
 
+// Сформировать накладную для CARGO-заказа (KASPI_DELIVERY_CARGO_ASSEMBLY).
+// CARGO-заказы используют внутренний API кабинета продавца (mc.shop.kaspi.kz),
+// а не стандартный Seller API v2 — они требуют сессионные куки браузера.
+//
+// Обязательные переменные окружения (добавить в Render):
+//   KASPI_MERCHANT_ID  — ID продавца (видно в URL кабинета и шапке, напр. "4480004")
+//   KASPI_MC_SESSION   — значение куки mc-session (из браузера, DevTools → Network)
+//   KASPI_MC_SID       — значение куки mc-sid (опционально, но рекомендуется)
+//
+// Куки истекают (обычно через несколько недель). Когда истекут — API вернёт 401,
+// и в Telegram придёт уведомление "обновите KASPI_MC_SESSION в Render".
+//
+// quantity — суммарное количество товаров в заказе (сумма qty всех позиций).
+async function assembleCargoOrder(orderCode, numberOfSpace, totalQuantity, timeoutMs) {
+  const merchantId = process.env.KASPI_MERCHANT_ID || "";
+  const mcSession = process.env.KASPI_MC_SESSION || "";
+  const mcSid = process.env.KASPI_MC_SID || "";
+  if (!merchantId || !mcSession) {
+    throw new Error("Не заданы KASPI_MERCHANT_ID / KASPI_MC_SESSION — CARGO заказ нельзя продвинуть автоматически (добавьте переменные окружения в Render)");
+  }
+  const bodyObj = {
+    cargos: [{ orderCode: String(orderCode), newCargoSpace: numberOfSpace || 1, quantity: totalQuantity || 1 }],
+  };
+  const payload = Buffer.from(JSON.stringify(bodyObj), "utf8");
+  const cookieStr = "mc-session=" + mcSession + (mcSid ? "; mc-sid=" + mcSid : "");
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: "mc.shop.kaspi.kz",
+      path: "/mc/api/order/cargo/assembled?_m=" + encodeURIComponent(merchantId),
+      method: "POST",
+      headers: {
+        "Cookie": cookieStr,
+        "Content-Type": "application/json",
+        "Content-Length": payload.length,
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://kaspi.kz",
+        "Referer": "https://kaspi.kz/",
+      },
+      timeout: timeoutMs || 20000,
+    };
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          return reject(new Error("Kaspi CARGO API [" + res.statusCode + "]: сессия истекла — обновите KASPI_MC_SESSION в Render"));
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error("Kaspi CARGO API [" + res.statusCode + "]: " + raw.slice(0, 300)));
+        }
+        resolve({ success: true });
+      });
+    });
+    req.on("error", (e) => reject(new Error("Kaspi CARGO API: ошибка соединения — " + e.message)));
+    req.on("timeout", () => req.destroy(new Error("Kaspi CARGO API: таймаут")));
+    req.write(payload);
+    req.end();
+  });
+}
+
 module.exports = {
   getOrders,
   getOrderEntries,
@@ -358,5 +419,6 @@ module.exports = {
   healthCheck,
   acceptOrder,
   assembleOrder,
+  assembleCargoOrder,
   setOrderStatus,
 };

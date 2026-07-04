@@ -513,6 +513,9 @@ async function runKaspiTransfer(options) {
     // Дополнительная пауза перед ASSEMBLE — снижаем нагрузку на Kaspi API
     await sleep(1000);
 
+    // Суммарное количество товаров в заказе — нужно для CARGO API.
+    const totalOrderQty = orderLines.reduce(function (s, ol) { return s + (ol.qty || 0); }, 0) || 1;
+
     let assembled = false;
     let assembleErrorMessage = null;
     const ASSEMBLE_RETRY_ATTEMPTS = 3;
@@ -524,32 +527,53 @@ async function runKaspiTransfer(options) {
         assembled = true;
       } catch (e) {
         assembleErrorMessage = e.message;
+        // 404 "Order not found" от стандартного API означает CARGO-заказ —
+        // повторять стандартный вызов бесполезно, сразу пробуем CARGO endpoint.
+        if (/\[404\]/.test(e.message)) break;
       }
     }
+
+    // Если стандартный ASSEMBLE вернул 404 — пробуем CARGO endpoint
+    // (POST mc.shop.kaspi.kz/mc/api/order/cargo/assembled).
+    // Требует KASPI_MERCHANT_ID + KASPI_MC_SESSION в env vars Render.
+    if (!assembled && /\[404\]/.test(assembleErrorMessage || "")) {
+      try {
+        await kaspi.assembleCargoOrder(orderCode, numberOfSpace, totalOrderQty);
+        assembled = true;
+        assembleErrorMessage = null;
+        console.log("[kaspiTransfer] CARGO assembled заказ №" + orderCode + " (qty=" + totalOrderQty + " мест=" + numberOfSpace + ")");
+      } catch (cargoErr) {
+        assembleErrorMessage = cargoErr.message;
+      }
+    }
+
     if (!assembled) {
       let statusNote = "";
-      try {
-        const recheck = await kaspi.getOrderRawByCode(orderCode);
-        if (recheck.found && recheck.attributes) {
-          const curStatus = recheck.attributes.status;
-          if (curStatus && curStatus !== attrs.status) {
-            statusNote = " — статус заказа в Kaspi изменился с \"" + attrs.status + "\" на \"" + curStatus +
-              "\" за время обработки, похоже именно из-за этого Kaspi отказал. ПРОВЕРЬТЕ заказ в личном кабинете Kaspi и, если он отменён/изменён, проверьте также созданную Реализацию в 1С (Реализация №" + (docResult.number || "?") + ") — она может быть ошибочной.";
-          } else {
-            statusNote = " — статус в Kaspi не изменился (\"" + (curStatus || attrs.status) +
-              "\"), скорее всего заказ просто нужно продвинуть вручную в личном кабинете Kaspi (Упаковка->Передача, места: " + numberOfSpace + "). 1С-документ (Реализация №" + (docResult.number || "?") + ") в этом случае верный, его трогать не нужно.";
+      const isCargo = /\[404\]|CARGO/.test(assembleErrorMessage || "");
+      if (isCargo) {
+        statusNote = " — это CARGO-заказ (Kaspi Доставка грузовой), для него нужны отдельные куки кабинета. " +
+          "Добавьте KASPI_MERCHANT_ID, KASPI_MC_SESSION, KASPI_MC_SID в Render — и следующий запуск продвинет его автоматически. " +
+          "Пока что продвиньте вручную: кабинет Kaspi → Упаковка → выберите заказ → «Сформировать накладные». " +
+          "Реализация №" + (docResult.number || "?") + " в 1С верная, трогать не нужно.";
+      } else {
+        try {
+          const recheck = await kaspi.getOrderRawByCode(orderCode);
+          if (recheck.found && recheck.attributes) {
+            const curStatus = recheck.attributes.status;
+            if (curStatus && curStatus !== attrs.status) {
+              statusNote = " — статус заказа в Kaspi изменился с \"" + attrs.status + "\" на \"" + curStatus +
+                "\" за время обработки, похоже именно из-за этого Kaspi отказал. ПРОВЕРЬТЕ заказ в личном кабинете Kaspi и, если он отменён/изменён, проверьте также созданную Реализацию в 1С (Реализация №" + (docResult.number || "?") + ") — она может быть ошибочной.";
+            } else {
+              statusNote = " — статус в Kaspi не изменился (\"" + (curStatus || attrs.status) +
+                "\"), скорее всего заказ просто нужно продвинуть вручную в личном кабинете Kaspi (Упаковка->Передача, места: " + numberOfSpace + "). 1С-документ (Реализация №" + (docResult.number || "?") + ") в этом случае верный, его трогать не нужно.";
+            }
           }
+        } catch (e) {
+          // диагностика необязательна
         }
-      } catch (e) {
-        // диагностика необязательна
       }
-      // Диагностика: логируем что именно отправляем в Kaspi при ASSEMBLE
-      console.warn("[kaspiTransfer][diag] assembleFailed заказ №" + orderCode +
-        " orderId=" + order.id +
-        " deliveryType=" + (attrs.deliveryType || "?") +
-        " kaspiDelivery=" + JSON.stringify(attrs.kaspiDelivery || null) +
-        " err=" + assembleErrorMessage);
-      assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но Kaspi не подтвердил продвижение (Упаковка->Передача) после " + ASSEMBLE_RETRY_ATTEMPTS + " попыток — " + assembleErrorMessage + statusNote);
+      console.warn("[kaspiTransfer] assembleFailed заказ №" + orderCode + " err=" + assembleErrorMessage);
+      assembleFailed.push("заказ №" + orderCode + ": Реализация №" + (docResult.number || "?") + " создана, но не продвинута в Kaspi — " + assembleErrorMessage + statusNote);
     }
 
     if (assembled) {

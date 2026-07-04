@@ -806,29 +806,35 @@ function looksLikeUnknownFieldError(message) {
 }
 
 // Ищет активную (не помеченную на удаление) Реализацию для заказа Kaspi по его
-// коду (напр. "981190171") — сравниваем по полю Комментарий, которое система всегда
-// заполняет как "Заказ №<код>". Используется перед созданием нового документа —
-// если в 1С уже есть активная Реализация, создавать дубль не нужно. Если в 1С
-// нашлась Реализация, но она помечена на удаление (DeletionMark=true) — возвращаем
-// found:false, т.е. система создаст новый документ (пользователь намеренно удалил
-// старый). Если запрос к 1С сам упал (сеть/таймаут) — возвращаем found:false
-// и продолжаем: попытка создать дубль маловероятна (1С должен быть доступен для
-// последующего POST), а пропускать заказ из-за временного сбоя диагностики — хуже.
+// коду (напр. "981190171") — сравниваем по полю Комментарий ("Заказ №<код>").
+//
+// ВАЖНО: 1С OData не поддерживает фильтрацию по полям неограниченной длины
+// (тип "Неограниченная строка") через операторы eq/ne — сервер отвечает
+// HTTP 500 "Нельзя сравнивать поля неограниченной длины". Комментарий —
+// именно такой тип. Поэтому фильтруем только по DeletionMark и Date,
+// а совпадение по Комментарию проверяем на стороне JS.
+//
+// Берём реализации за последние 4 дня (окно чуть больше Kaspi-лимита 14 дней
+// не нужно — заказ не может ждать больше пары дней). $top:300 перекрывает
+// ~40 реализаций/день × 4 дня с запасом.
 async function findActiveRealizationByOrderCode(orderCode) {
   if (!oneCPassword()) return { found: false, number: null, error: null };
   const comment = "Заказ №" + String(orderCode);
+  const since = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+  const sinceIso = since.toISOString().slice(0, 19);
   const params = {
     "$format": "json",
-    "$filter": "Комментарий eq '" + comment + "' and DeletionMark eq false",
-    "$select": "Ref_Key,Number,DeletionMark",
-    "$top": "1",
+    "$filter": "DeletionMark eq false and Date ge datetime'" + sinceIso + "'",
+    "$select": "Ref_Key,Number,DeletionMark,Комментарий",
+    "$top": "300",
   };
   const url = baseUrl() + "Document_РеализацияТоваровУслуг?" + buildQuery(params);
   try {
-    const json = await httpGetJSON(url, 15000);
+    const json = await httpGetJSON(url, 20000);
     const rows = extractArray(json);
-    if (rows.length === 0) return { found: false, number: null, error: null };
-    return { found: true, number: rows[0].Number || null, error: null };
+    const match = rows.find(function (r) { return (r.Комментарий || "") === comment; });
+    if (!match) return { found: false, number: null, error: null };
+    return { found: true, number: match.Number || null, error: null };
   } catch (e) {
     // Не блокируем перенос из-за сбоя проверки — логируем и продолжаем
     console.warn("[1C] findActiveRealizationByOrderCode(" + orderCode + "): " + e.message);
