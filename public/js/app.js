@@ -851,6 +851,74 @@
     realBtn.addEventListener("click", function () { runTest(false); });
   }
 
+  /* ---------------- Kaspi CARGO: обновление сессии и ручной запуск переноса ---------------- */
+  function initKaspiSession() {
+    var statusDiv = document.getElementById("kaspiSessionStatus");
+    var saveBtn = document.getElementById("kaspiSaveSessionBtn");
+    var runBtn = document.getElementById("kaspiRunTransferBtn");
+    var resultBox = document.getElementById("kaspiSessionResult");
+    if (!saveBtn || !runBtn || !resultBox) return;
+
+    function showResult(text) {
+      resultBox.textContent = text;
+      resultBox.classList.remove("hidden");
+    }
+
+    // Показываем статус текущей сессии
+    fetch("/api/kaspi/cargo-session")
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!statusDiv) return;
+        if (d.hasSession && d.updatedAt) {
+          var dt = new Date(d.updatedAt);
+          statusDiv.textContent = "✅ Сессия сохранена: " + dt.toLocaleString("ru-RU");
+          statusDiv.style.color = "#3a9c5a";
+        } else {
+          statusDiv.textContent = "⚠️ Сессия не сохранена — заполните поля ниже";
+          statusDiv.style.color = "#c07a00";
+        }
+      })
+      .catch(function () {});
+
+    saveBtn.addEventListener("click", function () {
+      var mcSession = (document.getElementById("kaspiMcSession").value || "").trim();
+      var mcSid = (document.getElementById("kaspiMcSid").value || "").trim();
+      if (!mcSession) { alert("Введите значение mc-session"); return; }
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Сохраняю…";
+      fetch("/api/kaspi/cargo-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mcSession: mcSession, mcSid: mcSid }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.ok) {
+            if (statusDiv) { statusDiv.textContent = "✅ Сессия сохранена: " + new Date().toLocaleString("ru-RU"); statusDiv.style.color = "#3a9c5a"; }
+            document.getElementById("kaspiMcSession").value = "";
+            document.getElementById("kaspiMcSid").value = "";
+            showResult("✅ Куки сохранены. CARGO-заказы будут обрабатываться с новой сессией.\n\nМожете нажать «Запустить перенос сейчас» чтобы сразу обработать ожидающие заказы.");
+          } else {
+            showResult("❌ Ошибка: " + (d.error || "неизвестная ошибка"));
+          }
+        })
+        .catch(function (e) { showResult("❌ Ошибка сети: " + e.message); })
+        .finally(function () { saveBtn.disabled = false; saveBtn.textContent = "Сохранить куки"; });
+    });
+
+    runBtn.addEventListener("click", function () {
+      if (!confirm("Запустить перенос всех заказов Kaspi → 1С прямо сейчас?")) return;
+      runBtn.disabled = true;
+      runBtn.textContent = "Запускаю…";
+      showResult("Выполняется перенос, подождите…");
+      fetch("/api/kaspi-transfer/run", { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { showResult(JSON.stringify(j, null, 2)); })
+        .catch(function (e) { showResult("❌ Ошибка соединения: " + e.message); })
+        .finally(function () { runBtn.disabled = false; runBtn.textContent = "▶ Запустить перенос сейчас"; });
+    });
+  }
+
   /* ---------------- инициализация ---------------- */
   function init() {
     initTabs();
@@ -862,6 +930,7 @@
     initManagersTab();
     initEmployeesTab();
     initKaspiTest();
+    initKaspiSession();
 
     fetch("/api/me").then(function (r) { return r.json(); }).then(function (me) {
       if (!me.authed) { window.location.href = "/login.html"; return; }
