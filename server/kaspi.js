@@ -347,20 +347,18 @@ async function assembleOrder(orderId, orderCode, numberOfSpace, timeoutMs) {
   return setOrderStatus(orderId, attrs, timeoutMs);
 }
 
-// Сформировать накладную для CARGO-заказа (KASPI_DELIVERY_CARGO_ASSEMBLY).
-// CARGO-заказы используют внутренний API кабинета продавца (mc.shop.kaspi.kz),
-// а не стандартный Seller API v2 — они требуют сессионные куки браузера.
+// Сформировать накладную через внутренний API кабинета продавца (mc.shop.kaspi.kz).
+// Используется как fallback для заказов, которые стандартный Seller API v2 отдаёт
+// с 404 при ASSEMBLE. Требует сессионные куки браузера (mc-session, mc-sid).
 //
-// Обязательные переменные окружения (добавить в Render):
-//   KASPI_MERCHANT_ID  — ID продавца (видно в URL кабинета и шапке, напр. "4480004")
-//   KASPI_MC_SESSION   — значение куки mc-session (из браузера, DevTools → Network)
-//   KASPI_MC_SID       — значение куки mc-sid (опционально, но рекомендуется)
+// Обязательные переменные окружения (добавить в Render → Environment):
+//   KASPI_MERCHANT_ID  — ID продавца: 4480004 (видно в шапке кабинета)
+//   KASPI_MC_SESSION   — значение куки mc-session (DevTools → Network → Headers → Cookie)
+//   KASPI_MC_SID       — значение куки mc-sid (там же)
 //
-// Куки истекают (обычно через несколько недель). Когда истекут — API вернёт 401,
-// и в Telegram придёт уведомление "обновите KASPI_MC_SESSION в Render".
-//
-// quantity — суммарное количество товаров в заказе (сумма qty всех позиций).
-async function assembleCargoOrder(orderCode, numberOfSpace, totalQuantity, timeoutMs) {
+// Куки истекают через несколько недель. При истечении API вернёт 401 и придёт
+// уведомление в Telegram. Нужно будет обновить значения в Render.
+async function assembleCargoOrder(orderCode, numberOfSpace, timeoutMs) {
   // Сессия: приоритет — store (кнопка в дашборде), fallback — env vars (Render)
   const store = require("./store");
   const saved = store.getKaspiCargoSession();
@@ -368,10 +366,11 @@ async function assembleCargoOrder(orderCode, numberOfSpace, totalQuantity, timeo
   const mcSession = (saved && saved.mcSession) || process.env.KASPI_MC_SESSION || "";
   const mcSid = (saved && saved.mcSid) || process.env.KASPI_MC_SID || "";
   if (!merchantId || !mcSession) {
-    throw new Error("Не заданы KASPI_MERCHANT_ID / KASPI_MC_SESSION — CARGO заказ нельзя продвинуть автоматически (добавьте куки в дашборде, вкладка Kaspi, или через Render)");
+    throw new Error("Не заданы KASPI_MERCHANT_ID / KASPI_MC_SESSION — добавьте в Render → Environment");
   }
+  // Формат тела подтверждён DevTools: только newCargoSpace и orderCode (без quantity).
   const bodyObj = {
-    cargos: [{ orderCode: String(orderCode), newCargoSpace: numberOfSpace || 1, quantity: totalQuantity || 1 }],
+    cargos: [{ orderCode: String(orderCode), newCargoSpace: numberOfSpace || 1 }],
   };
   const payload = Buffer.from(JSON.stringify(bodyObj), "utf8");
   const cookieStr = "mc-session=" + mcSession + (mcSid ? "; mc-sid=" + mcSid : "");

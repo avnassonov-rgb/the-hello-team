@@ -451,9 +451,33 @@ async function runKaspiTransfer(options) {
         } else {
           console.log("[kaspiTransfer][diag] orderId SAME заказ №" + p.orderCode + " id=" + freshOrderId);
         }
-        // Пробуем собрать ещё раз
+        // Пробуем собрать ещё раз (стандартный Seller API)
         await sleep(1000);
-        await kaspi.assembleOrder(freshOrderId, p.orderCode, p.numberOfSpace);
+        let retryAssembled = false;
+        let retryErr = null;
+        try {
+          await kaspi.assembleOrder(freshOrderId, p.orderCode, p.numberOfSpace);
+          retryAssembled = true;
+        } catch (e) {
+          retryErr = e;
+        }
+
+        // Fallback на внутренний API кабинета при 404
+        if (!retryAssembled && retryErr && /\[404\]/.test(retryErr.message)) {
+          try {
+            await kaspi.assembleCargoOrder(p.orderCode, p.numberOfSpace);
+            retryAssembled = true;
+            console.log("[kaspiTransfer] cargo-fallback (повтор) assembled заказ №" + p.orderCode);
+          } catch (cargoErr) {
+            retryErr = cargoErr;
+            console.warn("[kaspiTransfer] cargo-fallback (повтор) failed заказ №" + p.orderCode + " err=" + cargoErr.message);
+          }
+        }
+
+        if (!retryAssembled) {
+          throw retryErr;
+        }
+
         store.removeFromKaspiAssemblyPending(p.orderId);
         console.log("[kaspiTransfer] повтор ASSEMBLE успешен: заказ №" + p.orderCode);
         // Отправляем накладную в фоне
@@ -595,6 +619,21 @@ async function runKaspiTransfer(options) {
       }
     }
 
+    // Fallback: если стандартный Seller API вернул 404 — пробуем внутренний
+    // API кабинета (mc.shop.kaspi.kz/mc/api/order/cargo/assembled).
+    // Требует KASPI_MERCHANT_ID + KASPI_MC_SESSION в Render → Environment.
+    if (!assembled && /\[404\]/.test(assembleErrorMessage || "")) {
+      try {
+        await kaspi.assembleCargoOrder(orderCode, numberOfSpace);
+        assembled = true;
+        assembleErrorMessage = null;
+        console.log("[kaspiTransfer] cargo-fallback assembled заказ №" + orderCode);
+      } catch (cargoErr) {
+        assembleErrorMessage = cargoErr.message;
+        console.warn("[kaspiTransfer] cargo-fallback failed заказ №" + orderCode + " err=" + cargoErr.message);
+      }
+    }
+
     if (!assembled) {
       let statusNote = "";
       try {
@@ -669,51 +708,13 @@ async function runKaspiTransferSafe(options) {
   transferInProgress = true;
   try {
     const { summary, errorText } = await runKaspiTransfer(opts);
-    console.log(
-      (isTest ? "[kaspiTransfer][тест] " : "[kaspiTransfer] ") +
-      "перенос завершён: всего " + summary.total +
-      ", создано " + summary.created +
-      ", уже было " + summary.skippedAlready +
-      ", не перенесено " + summary.unresolved.length +
-      ", не продвинуто в Kaspi " + summary.assembleFailed.length +
-      ", накладная не отправлена " + summary.waybillFailed.length
-    );
-    if (!isTest) {
-      store.setKaspiTransferRunMeta({
-        lastRunAt: new Date().toISOString(),
-        lastRunOk: true,
-        lastRunError: errorText,
-        lastRunSummary: summary,
-      });
-      telegram.notifyIfChanged(
-        store,
-        "kaspiTransfer",
-        "Перенос заказов Kaspi → 1С",
-        errorText || null
-      ).catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
-    }
-    return { ok: true, summary };
-  } catch (e) {
-    console.error("[kaspiTransfer] критическая ошибка: " + e.message);
-    if (!isTest) {
-      store.setKaspiTransferRunMeta({
-        lastRunAt: new Date().toISOString(),
-        lastRunOk: false,
-        lastRunError: e.message,
-        lastRunSummary: null,
-      });
-      telegram.notifyIfChanged(
-        store,
-        "kaspiTransfer",
-        "Перенос заказов Kaspi → 1С",
-        e.message
-      ).catch((te) => console.error("[telegram] notifyIfChanged упал: " + te.message));
-    }
-    return { ok: false, error: e.message };
+    return { ok: true, summary, errorText };
+  } catch (err) {
+    console.error('[kaspiTransfer] runKaspiTransferSafe error:', err);
+    return { ok: false, error: err.message };
   } finally {
     transferInProgress = false;
   }
-
 }
 
 module.exports = { runKaspiTransferSafe };
