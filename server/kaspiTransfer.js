@@ -443,9 +443,17 @@ async function runKaspiTransfer(options) {
           console.log("[kaspiTransfer] повтор ASSEMBLE: заказ №" + p.orderCode + " уже в статусе «" + curStatus + "» → убираем из очереди");
           continue;
         }
+        // Используем свежий orderId из поиска по коду (может отличаться от batch API).
+        // Логируем сравнение — поможет найти причину 404.
+        const freshOrderId = raw.orderId || p.orderId;
+        if (freshOrderId !== p.orderId) {
+          console.log("[kaspiTransfer][diag] orderId DIFF заказ №" + p.orderCode + " batch=" + p.orderId + " search=" + freshOrderId);
+        } else {
+          console.log("[kaspiTransfer][diag] orderId SAME заказ №" + p.orderCode + " id=" + freshOrderId);
+        }
         // Пробуем собрать ещё раз
         await sleep(1000);
-        await kaspi.assembleOrder(p.orderId, p.orderCode, p.numberOfSpace);
+        await kaspi.assembleOrder(freshOrderId, p.orderCode, p.numberOfSpace);
         store.removeFromKaspiAssemblyPending(p.orderId);
         console.log("[kaspiTransfer] повтор ASSEMBLE успешен: заказ №" + p.orderCode);
         // Отправляем накладную в фоне
@@ -591,6 +599,12 @@ async function runKaspiTransfer(options) {
       let statusNote = "";
       try {
         const recheck = await kaspi.getOrderRawByCode(orderCode);
+        if (recheck.found) {
+          // Сравниваем orderId из batch-запроса vs поиска по коду — ключевая диагностика 404.
+          if (recheck.orderId && recheck.orderId !== order.id) {
+            console.log("[kaspiTransfer][diag] orderId DIFF (первый fail) заказ №" + orderCode + " batch=" + order.id + " search=" + recheck.orderId);
+          }
+        }
         if (recheck.found && recheck.attributes) {
           const curStatus = recheck.attributes.status;
           if (curStatus && curStatus !== attrs.status) {
