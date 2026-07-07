@@ -291,6 +291,7 @@ function httpPostJSON(pathAndQuery, body, timeoutMs) {
       method: "POST",
       headers: {
         "X-Auth-Token": token(),
+        "X-Merchant-Uid": process.env.KASPI_MERCHANT_ID || "4480004",
         "Accept": "*/*",
         "Content-Type": "application/vnd.api+json",
         "Content-Length": payload.length,
