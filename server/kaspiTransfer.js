@@ -228,7 +228,9 @@ function buildDocLines(orderLines, mappingMap, nomByName, unresolved, priceMap, 
   return { docLines, priceBreakdown };
 }
 
-async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
+// Скачивает PDF накладной для одного заказа (без отправки).
+// Возвращает { buffer, orderCode, numberOfSpace } или бросает ошибку.
+async function fetchWaybillBuffer(orderCode, numberOfSpace) {
   const MAX_ATTEMPTS = 13;
   const DELAY_MS = 30000;
   let waybillUrl = null;
@@ -242,50 +244,81 @@ async function fetchAndSendWaybillInBackground(orderCode, numberOfSpace) {
     }
   }
   if (!waybillUrl) {
-    const msg = "⚠️ Заказ №" + orderCode + ": накладная не появилась в Kaspi за " +
-      Math.round((MAX_ATTEMPTS * DELAY_MS) / 60000) + " мин. Скачайте её вручную в кабинете Kaspi.";
-    console.error("[kaspiTransfer] " + msg);
-    await telegram.send(msg);
-    return;
+    const err = new Error("накладная не появилась за " + Math.round((MAX_ATTEMPTS * DELAY_MS) / 60000) + " мин");
+    err.orderCode = orderCode;
+    throw err;
+  }
+  const pdf = await kaspi.downloadWaybillPdf(waybillUrl);
+  return { buffer: pdf.buffer, orderCode, numberOfSpace };
+}
+
+// Ждёт все накладные (параллельно), склеивает PDF в один файл и отправляет в Telegram.
+// waybillTasks — массив { promise, orderCode, numberOfSpace }
+// waybillFailed — массив куда добавляем описания ошибок
+async function mergeAndSendWaybills(waybillTasks, waybillFailed) {
+  if (waybillTasks.length === 0) return;
+
+  const results = await Promise.allSettled(waybillTasks.map((t) => t.promise));
+  const successes = [];
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const { orderCode, numberOfSpace } = waybillTasks[i];
+    if (r.status === "fulfilled") {
+      successes.push({ buffer: r.value.buffer, orderCode, numberOfSpace });
+    } else {
+      const errMsg = (r.reason && r.reason.message) || "неизвестная ошибка";
+      const msg = "⚠️ Заказ №" + orderCode + ": " + errMsg + ". Скачайте накладную вручную в кабинете Kaspi.";
+      waybillFailed.push("заказ №" + orderCode + ": " + errMsg);
+      console.error("[kaspiTransfer] " + msg);
+      await telegram.send(msg).catch(() => {});
+    }
   }
 
-  let pdf;
-  try {
-    pdf = await kaspi.downloadWaybillPdf(waybillUrl);
-  } catch (e) {
-    const msg = "⚠️ Заказ №" + orderCode + ": накладная найдена в Kaspi, но не скачалась (" + e.message + "). Скачайте вручную в кабинете Kaspi.";
-    console.error("[kaspiTransfer] " + msg);
-    await telegram.send(msg);
-    return;
-  }
+  if (successes.length === 0) return;
 
-  const warehouseChatIds = store.findEmployeeChatIdsByRole("Зав.складом");
-  const caption = "Накладная — заказ №" + orderCode + ", мест: " + numberOfSpace;
-  let sendResults;
-  if (warehouseChatIds.length) {
-    sendResults = await Promise.all(
-      warehouseChatIds.map(function (chatId) {
-        return telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption, { chatId: chatId });
-      })
-    );
+  // Склеиваем PDF если больше одного
+  let pdfBuffer;
+  if (successes.length === 1) {
+    pdfBuffer = successes[0].buffer;
   } else {
-    sendResults = [await telegram.sendDocument(pdf.buffer, "Накладная_" + orderCode + ".pdf", caption)];
+    try {
+      const { PDFDocument } = require("pdf-lib");
+      const merged = await PDFDocument.create();
+      for (const s of successes) {
+        const doc = await PDFDocument.load(s.buffer);
+        const pages = await merged.copyPages(doc, doc.getPageIndices());
+        pages.forEach((p) => merged.addPage(p));
+      }
+      pdfBuffer = Buffer.from(await merged.save());
+    } catch (mergeErr) {
+      // Если pdf-lib не смог — отправляем по одному как раньше
+      console.error("[kaspiTransfer] PDF merge failed: " + mergeErr.message + " — отправляем по одному");
+      for (const s of successes) {
+        const caption = "Накладная — заказ №" + s.orderCode + ", мест: " + s.numberOfSpace;
+        const chatIds = store.findEmployeeChatIdsByRole("Зав.складом");
+        const targets = chatIds.length ? chatIds.map((id) => ({ chatId: id })) : [{}];
+        await Promise.all(targets.map((opts) => telegram.sendDocument(s.buffer, "Накладная_" + s.orderCode + ".pdf", caption, opts).catch(() => {})));
+      }
+      return;
+    }
   }
-  const failedSends = sendResults.filter((r) => !r.ok);
-  if (failedSends.length) {
-    console.error(
-      "[kaspiTransfer] заказ №" + orderCode + ": накладная скачана, но отправлена не всем получателям (" +
-      failedSends.length + " из " + sendResults.length + " не удалось) — " +
-      failedSends.map((r) => r.error).join("; ")
-    );
+
+  const orderNums = successes.map((s) => "№" + s.orderCode).join(", ");
+  const caption = successes.length === 1
+    ? "Накладная — заказ " + orderNums + ", мест: " + successes[0].numberOfSpace
+    : "Накладные (" + successes.length + " заказов): " + orderNums;
+  const fileName = successes.length === 1
+    ? "Накладная_" + successes[0].orderCode + ".pdf"
+    : "Накладные_" + successes.length + "шт.pdf";
+
+  const chatIds = store.findEmployeeChatIdsByRole("Зав.складом");
+  if (chatIds.length) {
+    await Promise.all(chatIds.map((id) => telegram.sendDocument(pdfBuffer, fileName, caption, { chatId: id }).catch(() => {})));
+  } else {
+    await telegram.sendDocument(pdfBuffer, fileName, caption).catch(() => {});
   }
-  if (failedSends.length === sendResults.length) {
-    await telegram.send(
-      "⚠️ Заказ №" + orderCode + ": накладная скачана из Kaspi, но НЕ доставлена в Telegram (" +
-      ((failedSends[0] && failedSends[0].error) || "неизвестная ошибка") +
-      "). Скачайте вручную в кабинете Kaspi."
-    );
-  }
+  console.log("[kaspiTransfer] накладные отправлены: " + successes.length + " шт. → " + fileName);
 }
 
 function computeNumberOfSpace(orderLines, mappingMap, detailed) {
@@ -410,6 +443,7 @@ async function runKaspiTransfer(options) {
   const unresolvedOrders = [];
   const assembleFailed = [];
   const waybillFailed = [];
+  const waybillTasks = []; // { promise, orderCode, numberOfSpace } — собираем, потом шлём одним PDF
   const processedThisRun = [];
   const dryRunPreview = [];
   // Пауза между заказами — защита от rate limit Kaspi.
@@ -480,10 +514,7 @@ async function runKaspiTransfer(options) {
 
         store.removeFromKaspiAssemblyPending(p.orderId);
         console.log("[kaspiTransfer] повтор ASSEMBLE успешен: заказ №" + p.orderCode);
-        // Отправляем накладную в фоне
-        fetchAndSendWaybillInBackground(p.orderCode, p.numberOfSpace).catch((e) =>
-          console.error("[kaspiTransfer] фоновая отправка накладной (повтор) №" + p.orderCode + ": " + e.message)
-        );
+        waybillTasks.push({ promise: fetchWaybillBuffer(p.orderCode, p.numberOfSpace), orderCode: p.orderCode, numberOfSpace: p.numberOfSpace });
       } catch (e) {
         console.warn("[kaspiTransfer] повтор ASSEMBLE не удался: заказ №" + p.orderCode + " err=" + e.message);
         // Оставляем в очереди — попробуем в следующий запуск
@@ -666,13 +697,14 @@ async function runKaspiTransfer(options) {
 
     if (assembled) {
       store.removeFromKaspiAssemblyPending(order.id); // на случай если был в очереди с прошлого запуска
-      fetchAndSendWaybillInBackground(orderCode, numberOfSpace).catch((e) =>
-        console.error("[kaspiTransfer] фоновая отправка накладной для заказа №" + orderCode + " упала: " + e.message)
-      );
+      waybillTasks.push({ promise: fetchWaybillBuffer(orderCode, numberOfSpace), orderCode, numberOfSpace });
     }
   }
 
   if (!dryRun && processedThisRun.length > 0) store.markKaspiOrdersProcessed(processedThisRun);
+
+  // Ждём все накладные (параллельно), склеиваем в один PDF и отправляем
+  await mergeAndSendWaybills(waybillTasks, waybillFailed);
 
   const summary = {
     total: candidateOrders.length,
