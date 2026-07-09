@@ -143,7 +143,7 @@ function sendDocument(buffer, filename, caption, opts) {
         "Content-Type": "multipart/form-data; boundary=" + boundary,
         "Content-Length": payload.length,
       },
-      timeout: 30000,
+      timeout: 300000,
     };
     const req = https.request(options, (res) => {
       const chunks = [];
