@@ -277,8 +277,29 @@ async function mergeAndSendWaybills(waybillTasks, waybillFailed) {
 
   if (successes.length === 0) return;
 
+  const chatIds = store.findEmployeeChatIdsByRole("Зав.складом");
+  const targets = chatIds.length ? chatIds.map((id) => ({ chatId: id })) : [{}];
+
+  // Шлёт один PDF всем адресатам (зав.складом), возвращает { ok, error }.
+  // ok=true если доставлено хотя бы одному. sendDocument никогда не
+  // выбрасывает исключение — он резолвится { ok:false, error } при неудаче,
+  // поэтому раньше результат просто игнорировался и в лог писалось
+  // "отправлено", даже если Telegram реально ответил ошибкой.
+  async function sendToWarehouse(buffer, filename, caption) {
+    const sendResults = await Promise.all(
+      targets.map((opts) => telegram.sendDocument(buffer, filename, caption, opts))
+    );
+    const anyOk = sendResults.some((r) => r && r.ok);
+    if (anyOk) return { ok: true };
+    const errMsg = (sendResults.find((r) => r && r.error) || {}).error || "неизвестная ошибка";
+    return { ok: false, error: errMsg };
+  }
+
+  const orderNums = successes.map((s) => "№" + s.orderCode).join(", ");
+
   // Склеиваем PDF если больше одного
-  let pdfBuffer;
+  let pdfBuffer = null;
+  let mergeFailed = false;
   if (successes.length === 1) {
     pdfBuffer = successes[0].buffer;
   } else {
@@ -292,33 +313,65 @@ async function mergeAndSendWaybills(waybillTasks, waybillFailed) {
       }
       pdfBuffer = Buffer.from(await merged.save());
     } catch (mergeErr) {
-      // Если pdf-lib не смог — отправляем по одному как раньше
+      mergeFailed = true;
       console.error("[kaspiTransfer] PDF merge failed: " + mergeErr.message + " — отправляем по одному");
-      for (const s of successes) {
-        const caption = "Накладная — заказ №" + s.orderCode + ", мест: " + s.numberOfSpace;
-        const chatIds = store.findEmployeeChatIdsByRole("Зав.складом");
-        const targets = chatIds.length ? chatIds.map((id) => ({ chatId: id })) : [{}];
-        await Promise.all(targets.map((opts) => telegram.sendDocument(s.buffer, "Накладная_" + s.orderCode + ".pdf", caption, opts).catch(() => {})));
-      }
-      return;
     }
   }
 
-  const orderNums = successes.map((s) => "№" + s.orderCode).join(", ");
-  const caption = successes.length === 1
-    ? "Накладная — заказ " + orderNums + ", мест: " + successes[0].numberOfSpace
-    : "Накладные (" + successes.length + " заказов): " + orderNums;
+  if (mergeFailed) {
+    // Отправляем по одному — caption короткий (один заказ), лимит Telegram
+    // тут не грозит.
+    let anyFailed = false;
+    for (const s of successes) {
+      const caption = "Накладная — заказ №" + s.orderCode + ", мест: " + s.numberOfSpace;
+      const res = await sendToWarehouse(s.buffer, "Накладная_" + s.orderCode + ".pdf", caption);
+      if (!res.ok) {
+        anyFailed = true;
+        waybillFailed.push("заказ №" + s.orderCode + ": Telegram — " + res.error);
+      }
+    }
+    if (anyFailed) {
+      await telegram.send("⚠️ Часть накладных не отправлена в Telegram — список см. в сводке. Скачайте вручную в кабинете Kaspi.").catch(() => {});
+    }
+    console.log("[kaspiTransfer] накладные отправлены по одному: " + successes.length + " шт." + (anyFailed ? " (частично)" : ""));
+    return;
+  }
+
   const fileName = successes.length === 1
     ? "Накладная_" + successes[0].orderCode + ".pdf"
     : "Накладные_" + successes.length + "шт.pdf";
 
-  const chatIds = store.findEmployeeChatIdsByRole("Зав.складом");
-  if (chatIds.length) {
-    await Promise.all(chatIds.map((id) => telegram.sendDocument(pdfBuffer, fileName, caption, { chatId: id }).catch(() => {})));
-  } else {
-    await telegram.sendDocument(pdfBuffer, fileName, caption).catch(() => {});
+  // ВАЖНО: caption документа в Telegram ограничен 1024 символами. Раньше
+  // сюда подставляли полный список номеров заказов — при 93 заказах (см.
+  // инцидент 14.08.2026) это давало caption на ~1300+ символов, Telegram
+  // отвечал 400 "message caption is too long", отправка проваливалась для
+  // всех адресатов, а лог всё равно писал "накладные отправлены". Поэтому
+  // caption держим коротким, а полный список номеров шлём отдельным текстом.
+  const caption = successes.length === 1
+    ? "Накладная — заказ " + orderNums + ", мест: " + successes[0].numberOfSpace
+    : "Накладные (" + successes.length + " заказов), файл: " + fileName;
+
+  const sendRes = await sendToWarehouse(pdfBuffer, fileName, caption);
+
+  if (successes.length > 1) {
+    const listMsg = "Накладные (" + successes.length + " заказов): " + orderNums;
+    if (chatIds.length) {
+      await Promise.all(chatIds.map((id) => telegram.sendTo(id, listMsg))).catch(() => {});
+    } else {
+      await telegram.send(listMsg).catch(() => {});
+    }
   }
-  console.log("[kaspiTransfer] накладные отправлены: " + successes.length + " шт. → " + fileName);
+
+  if (!sendRes.ok) {
+    waybillFailed.push(successes.length + " накладная(ых) не доставлена(о) в Telegram: " + sendRes.error);
+    console.error("[kaspiTransfer] накладные НЕ отправлены (" + successes.length + " шт.): " + sendRes.error);
+    await telegram.send(
+      "⚠️ Накладные (" + successes.length + " заказов, файл " + fileName + ") не удалось отправить в Telegram: " +
+      sendRes.error + ". Скачайте вручную в кабинете Kaspi."
+    ).catch(() => {});
+  } else {
+    console.log("[kaspiTransfer] накладные отправлены: " + successes.length + " шт. → " + fileName);
+  }
 }
 
 function computeNumberOfSpace(orderLines, mappingMap, detailed) {
