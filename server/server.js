@@ -473,6 +473,14 @@ server.listen(PORT, () => {
     console.log("[kaspiTransfer] расписание включено — запуск в 08:45 и 13:15 по Костанаю");
     scheduleDailyKaspiTransfer(3, 45, "08:45 Костанай");
     scheduleDailyKaspiTransfer(8, 15, "13:15 Костанай");
+
+    // Догоняющая отправка накладных, которые не успели за 7 минут основного
+    // прогона (см. kaspiTransfer.retryPendingWaybills) — проверяем очередь
+    // каждые 10 минут в течение дня, не дожидаясь следующего запуска
+    // расписания 08:45/13:15.
+    const WAYBILL_RETRY_INTERVAL_MS = 10 * 60 * 1000;
+    console.log("[kaspiTransfer] догоняющая отправка накладных включена — проверка каждые 10 мин");
+    setInterval(() => { kaspiTransfer.retryPendingWaybills().catch((e) => console.error("[kaspiTransfer] retryPendingWaybills упал: " + e.message)); }, WAYBILL_RETRY_INTERVAL_MS);
   } else if (transferPaused) {
     console.log("[kaspiTransfer] расписание выключено — стоит на паузе (KASPI_TRANSFER_PAUSED=1). Ручной запуск через /api/kaspi-transfer/run работает как обычно.");
   } else {

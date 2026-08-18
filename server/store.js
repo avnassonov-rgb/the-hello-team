@@ -32,6 +32,12 @@ const DEFAULT_STATE = {
   //      но Kaspi API вернул ошибку при первом ASSEMBLE. Каждый запуск повторяет
   //      попытку до тех пор, пока не успешно или пока заказ не сменит статус. ----
   kaspiAssemblyPending: [], // [{ orderId, orderCode, numberOfSpace, addedAt }]
+  // ---- Очередь "догоняющей" отправки накладных: заказ продвинут в Kaspi, но
+  //      PDF накладной не появился за 7 минут основного прогона. Отдельный
+  //      таймер (см. server.js) проверяет эту очередь каждые ~10 минут в
+  //      течение дня — чтобы накладная всё равно ушла сегодня, а не только
+  //      на следующем запуске 08:45/13:15. ----
+  kaspiWaybillPending: [], // [{ orderCode, numberOfSpace, addedAt }]
   // ---- Kaspi → 1С перенос заказов (Реализация) ----
   kaspiTransfer: {
     processedOrderIds: [], // Kaspi orderId, уже превращённые в Реализацию — защита от повторов при двух запусках в день
@@ -127,6 +133,32 @@ function removeFromKaspiAssemblyPending(orderId) {
   const list = (Array.isArray(state.kaspiAssemblyPending) ? state.kaspiAssemblyPending : [])
     .filter((e) => e.orderId !== orderId);
   return patchState({ kaspiAssemblyPending: list });
+}
+
+// ---- Очередь "догоняющей" отправки накладных ----
+const MAX_WAYBILL_PENDING = 500;
+function getKaspiWaybillPending() {
+  const state = readState();
+  return Array.isArray(state.kaspiWaybillPending) ? state.kaspiWaybillPending : [];
+}
+function addToKaspiWaybillPending(entry) {
+  const state = readState();
+  const list = Array.isArray(state.kaspiWaybillPending) ? state.kaspiWaybillPending.slice() : [];
+  const idx = list.findIndex((e) => e.orderCode === entry.orderCode);
+  if (idx !== -1) list.splice(idx, 1);
+  list.push({
+    orderCode: entry.orderCode,
+    numberOfSpace: entry.numberOfSpace,
+    addedAt: new Date().toISOString(),
+  });
+  while (list.length > MAX_WAYBILL_PENDING) list.shift();
+  return patchState({ kaspiWaybillPending: list });
+}
+function removeFromKaspiWaybillPending(orderCode) {
+  const state = readState();
+  const list = (Array.isArray(state.kaspiWaybillPending) ? state.kaspiWaybillPending : [])
+    .filter((e) => e.orderCode !== orderCode);
+  return patchState({ kaspiWaybillPending: list });
 }
 
 // ---- Kaspi → 1С перенос: дедупликация и статус последнего запуска ----
@@ -264,6 +296,7 @@ module.exports = {
   getCachedStage, setCachedStage, deleteCachedStage,
   getKaspiCargoSession, setKaspiCargoSession,
   getKaspiAssemblyPending, addToKaspiAssemblyPending, removeFromKaspiAssemblyPending,
+  getKaspiWaybillPending, addToKaspiWaybillPending, removeFromKaspiWaybillPending,
   getKaspiTransferState, isKaspiOrderProcessed, markKaspiOrdersProcessed, setKaspiTransferRunMeta,
   unmarkKaspiOrderProcessed,
   getEmployees, getEmployeeRoles, saveEmployeeRoles, addEmployee, updateEmployee, deleteEmployee,

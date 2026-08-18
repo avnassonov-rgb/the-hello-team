@@ -252,6 +252,36 @@ async function fetchWaybillBuffer(orderCode, numberOfSpace) {
   return { buffer: pdf.buffer, orderCode, numberOfSpace };
 }
 
+// Шлёт один PDF всем адресатам (зав.складом), возвращает { ok, error }.
+// ok=true если доставлено хотя бы одному. sendDocument никогда не
+// выбрасывает исключение — он резолвится { ok:false, error } при неудаче,
+// поэтому раньше результат просто игнорировался и в лог писалось
+// "отправлено", даже если Telegram реально ответил ошибкой.
+// На уровне модуля (а не внутри mergeAndSendWaybills) — нужен ещё и
+// retryPendingWaybills для "догоняющей" отправки.
+async function sendToWarehouse(buffer, filename, caption) {
+  const chatIds = store.findEmployeeChatIdsByRole("Зав.складом");
+  const targets = chatIds.length ? chatIds.map((id) => ({ chatId: id })) : [{}];
+  const sendResults = await Promise.all(
+    targets.map((opts) => telegram.sendDocument(buffer, filename, caption, opts))
+  );
+  const anyOk = sendResults.some((r) => r && r.ok);
+  if (anyOk) return { ok: true };
+  const errMsg = (sendResults.find((r) => r && r.error) || {}).error || "неизвестная ошибка";
+  return { ok: false, error: errMsg };
+}
+
+// Шлёт предупреждение и зав.складом (всем, кому уходят накладные), и
+// Александру (дефолтный чат уведомлений) — раньше такие предупреждения
+// видел только Александр, зав.складом о проблеме не узнавал вообще.
+async function notifyWarehouseAndOwner(text) {
+  const chatIds = store.findEmployeeChatIdsByRole("Зав.складом");
+  if (chatIds.length) {
+    await Promise.all(chatIds.map((id) => telegram.sendTo(id, text))).catch(() => {});
+  }
+  await telegram.send(text).catch(() => {});
+}
+
 // Ждёт все накладные (параллельно), склеивает PDF в один файл и отправляет в Telegram.
 // waybillTasks — массив { promise, orderCode, numberOfSpace }
 // waybillFailed — массив куда добавляем описания ошибок
@@ -268,32 +298,19 @@ async function mergeAndSendWaybills(waybillTasks, waybillFailed) {
       successes.push({ buffer: r.value.buffer, orderCode, numberOfSpace });
     } else {
       const errMsg = (r.reason && r.reason.message) || "неизвестная ошибка";
-      const msg = "⚠️ Заказ №" + orderCode + ": " + errMsg + ". Скачайте накладную вручную в кабинете Kaspi.";
+      const msg = "⚠️ Заказ №" + orderCode + ": " + errMsg +
+        ". Бот попробует догнать отправку в течение дня (проверка каждые ~10 мин) — " +
+        "если не получится, накладную нужно будет скачать вручную в кабинете Kaspi.";
       waybillFailed.push("заказ №" + orderCode + ": " + errMsg);
       console.error("[kaspiTransfer] " + msg);
-      await telegram.send(msg).catch(() => {});
+      await notifyWarehouseAndOwner(msg);
+      store.addToKaspiWaybillPending({ orderCode, numberOfSpace });
     }
   }
 
   if (successes.length === 0) return;
 
   const chatIds = store.findEmployeeChatIdsByRole("Зав.складом");
-  const targets = chatIds.length ? chatIds.map((id) => ({ chatId: id })) : [{}];
-
-  // Шлёт один PDF всем адресатам (зав.складом), возвращает { ok, error }.
-  // ok=true если доставлено хотя бы одному. sendDocument никогда не
-  // выбрасывает исключение — он резолвится { ok:false, error } при неудаче,
-  // поэтому раньше результат просто игнорировался и в лог писалось
-  // "отправлено", даже если Telegram реально ответил ошибкой.
-  async function sendToWarehouse(buffer, filename, caption) {
-    const sendResults = await Promise.all(
-      targets.map((opts) => telegram.sendDocument(buffer, filename, caption, opts))
-    );
-    const anyOk = sendResults.some((r) => r && r.ok);
-    if (anyOk) return { ok: true };
-    const errMsg = (sendResults.find((r) => r && r.error) || {}).error || "неизвестная ошибка";
-    return { ok: false, error: errMsg };
-  }
 
   const orderNums = successes.map((s) => "№" + s.orderCode).join(", ");
 
@@ -331,7 +348,7 @@ async function mergeAndSendWaybills(waybillTasks, waybillFailed) {
       }
     }
     if (anyFailed) {
-      await telegram.send("⚠️ Часть накладных не отправлена в Telegram — список см. в сводке. Скачайте вручную в кабинете Kaspi.").catch(() => {});
+      await notifyWarehouseAndOwner("⚠️ Часть накладных не отправлена в Telegram — список см. в сводке. Скачайте вручную в кабинете Kaspi.");
     }
     console.log("[kaspiTransfer] накладные отправлены по одному: " + successes.length + " шт." + (anyFailed ? " (частично)" : ""));
     return;
@@ -365,13 +382,64 @@ async function mergeAndSendWaybills(waybillTasks, waybillFailed) {
   if (!sendRes.ok) {
     waybillFailed.push(successes.length + " накладная(ых) не доставлена(о) в Telegram: " + sendRes.error);
     console.error("[kaspiTransfer] накладные НЕ отправлены (" + successes.length + " шт.): " + sendRes.error);
-    await telegram.send(
+    await notifyWarehouseAndOwner(
       "⚠️ Накладные (" + successes.length + " заказов, файл " + fileName + ") не удалось отправить в Telegram: " +
       sendRes.error + ". Скачайте вручную в кабинете Kaspi."
-    ).catch(() => {});
+    );
   } else {
     console.log("[kaspiTransfer] накладные отправлены: " + successes.length + " шт. → " + fileName);
   }
+}
+
+// ---- Догоняющая отправка накладных ------------------------------------
+// Заказы, у которых PDF накладной не появился за 7 минут основного прогона
+// (см. mergeAndSendWaybills), попадают в очередь store.kaspiWaybillPending.
+// Эта функция вызывается отдельным таймером каждые ~10 минут (см. server.js)
+// в течение всего дня — НЕ ждём следующего запуска расписания (08:45/13:15),
+// иначе заказы, собранные в 13:15, попали бы на склад Kaspi только на
+// следующий день. Каждый вызов — быстрая проверка "готова ли уже накладная",
+// без долгого ожидания внутри самой функции.
+async function retryPendingWaybills() {
+  const pending = store.getKaspiWaybillPending();
+  if (pending.length === 0) return;
+
+  const CUTOFF_HOURS = 10; // дольше не пытаемся — шлём финальное предупреждение
+  const now = Date.now();
+  const recovered = [];
+
+  for (const p of pending) {
+    const ageMs = now - new Date(p.addedAt).getTime();
+    if (ageMs > CUTOFF_HOURS * 3600 * 1000) {
+      store.removeFromKaspiWaybillPending(p.orderCode);
+      await notifyWarehouseAndOwner(
+        "⚠️ Заказ №" + p.orderCode + ": накладная так и не появилась в Kaspi за " + CUTOFF_HOURS +
+        " ч. Дальше бот пробовать не будет — скачайте вручную в кабинете Kaspi."
+      );
+      continue;
+    }
+    try {
+      const raw = await kaspi.getOrderRawByCode(p.orderCode);
+      const waybillUrl = raw.found && raw.attributes && raw.attributes.kaspiDelivery && raw.attributes.kaspiDelivery.waybill;
+      if (!waybillUrl) continue; // ещё не готова — проверим на следующем цикле
+      const pdf = await kaspi.downloadWaybillPdf(waybillUrl);
+      store.removeFromKaspiWaybillPending(p.orderCode);
+      recovered.push({ buffer: pdf.buffer, orderCode: p.orderCode, numberOfSpace: p.numberOfSpace });
+    } catch (e) {
+      console.warn("[kaspiTransfer] retryPendingWaybills: заказ №" + p.orderCode + " ещё не готов/ошибка: " + e.message);
+    }
+  }
+
+  if (recovered.length === 0) return;
+
+  for (const r of recovered) {
+    const caption = "Накладная — заказ №" + r.orderCode + ", мест: " + r.numberOfSpace + " (дослана после повтора)";
+    const res = await sendToWarehouse(r.buffer, "Накладная_" + r.orderCode + ".pdf", caption);
+    if (!res.ok) {
+      console.error("[kaspiTransfer] retryPendingWaybills: не удалось отправить заказ №" + r.orderCode + ": " + res.error);
+      store.addToKaspiWaybillPending({ orderCode: r.orderCode, numberOfSpace: r.numberOfSpace });
+    }
+  }
+  console.log("[kaspiTransfer] retryPendingWaybills: дослано " + recovered.length + " накладных");
 }
 
 function computeNumberOfSpace(orderLines, mappingMap, detailed) {
@@ -802,4 +870,4 @@ async function runKaspiTransferSafe(options) {
   }
 }
 
-module.exports = { runKaspiTransferSafe };
+module.exports = { runKaspiTransferSafe, retryPendingWaybills };
