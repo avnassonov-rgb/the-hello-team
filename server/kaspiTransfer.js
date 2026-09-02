@@ -635,7 +635,9 @@ async function runKaspiTransfer(options) {
 
         store.removeFromKaspiAssemblyPending(p.orderId);
         console.log("[kaspiTransfer] повтор ASSEMBLE успешен: заказ №" + p.orderCode);
-        waybillTasks.push({ promise: fetchWaybillBuffer(p.orderCode, p.numberOfSpace), orderCode: p.orderCode, numberOfSpace: p.numberOfSpace });
+        const retryWaybillPromise = fetchWaybillBuffer(p.orderCode, p.numberOfSpace);
+        retryWaybillPromise.catch(() => {}); // предотвращаем unhandled rejection — Promise.allSettled ловит ниже
+        waybillTasks.push({ promise: retryWaybillPromise, orderCode: p.orderCode, numberOfSpace: p.numberOfSpace });
       } catch (e) {
         console.warn("[kaspiTransfer] повтор ASSEMBLE не удался: заказ №" + p.orderCode + " err=" + e.message);
         // Оставляем в очереди — попробуем в следующий запуск
@@ -818,7 +820,9 @@ async function runKaspiTransfer(options) {
 
     if (assembled) {
       store.removeFromKaspiAssemblyPending(order.id); // на случай если был в очереди с прошлого запуска
-      waybillTasks.push({ promise: fetchWaybillBuffer(orderCode, numberOfSpace), orderCode, numberOfSpace });
+      const waybillPromise = fetchWaybillBuffer(orderCode, numberOfSpace);
+      waybillPromise.catch(() => {}); // предотвращаем unhandled rejection — Promise.allSettled ловит ниже
+      waybillTasks.push({ promise: waybillPromise, orderCode, numberOfSpace });
     }
   }
 
