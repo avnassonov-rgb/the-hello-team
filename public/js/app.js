@@ -810,6 +810,101 @@
     }
   }
 
+  /* ---------------- Каспи заказы: по дням + повторные клиенты ---------------- */
+  var kaspiOrdersLoaded = false;
+
+  function koFmtDate(iso) {
+    var p = iso.split("-");
+    return p[2] + "." + p[1];
+  }
+
+  function koRenderSummary(days) {
+    var wrap = document.getElementById("koSummary");
+    if (!wrap || !days.length) return;
+    var today = days[days.length - 1];
+    var sum30Total = days.reduce(function (a, d) { return a + d.total; }, 0);
+    var sum30Repeat = days.reduce(function (a, d) { return a + d.repeat; }, 0);
+    var avgPct = sum30Total > 0 ? Math.round((sum30Repeat / sum30Total) * 1000) / 10 : 0;
+    wrap.innerHTML =
+      '<div class="ko-stat pink"><div class="ko-stat-num">' + today.total + '</div><div class="ko-stat-cap">Заказов сегодня</div></div>' +
+      '<div class="ko-stat"><div class="ko-stat-num">' + today.repeat + '</div><div class="ko-stat-cap">Повторных сегодня (' + today.repeatPct + '%)</div></div>' +
+      '<div class="ko-stat"><div class="ko-stat-num">' + avgPct + '%</div><div class="ko-stat-cap">Доля повторных за период</div></div>';
+  }
+
+  function koRenderChart(days) {
+    var svg = document.getElementById("koChart");
+    if (!svg || !days.length) return;
+    var W = 900, H = 320, left = 8, right = 8, top = 28, bottom = 26;
+    var innerW = W - left - right, innerH = H - top - bottom;
+    var n = days.length;
+    var step = innerW / n;
+    var barW = Math.max(2, step * 0.62);
+    var maxVal = Math.max(1, Math.max.apply(null, days.map(function (d) { return d.total; })));
+    var scale = innerH / maxVal;
+    var showLabel = barW >= 16;
+    var labelEvery = barW >= 20 ? 1 : Math.ceil(20 / step);
+    var parts = [];
+    days.forEach(function (d, i) {
+      var x = left + i * step + (step - barW) / 2;
+      var totalH = d.total * scale;
+      var repeatH = d.repeat * scale;
+      var newH = totalH - repeatH;
+      var yTotalTop = top + (innerH - totalH);
+      var yRepeatTop = yTotalTop;
+      var yNewTop = yTotalTop + repeatH;
+      if (repeatH > 0) {
+        parts.push('<rect x="' + x + '" y="' + yRepeatTop + '" width="' + barW + '" height="' + repeatH + '" fill="var(--ink)" rx="3"></rect>');
+      }
+      if (newH > 0) {
+        parts.push('<rect x="' + x + '" y="' + yNewTop + '" width="' + barW + '" height="' + newH + '" fill="var(--pink)" rx="3"></rect>');
+      }
+      if (d.total === 0) {
+        parts.push('<rect x="' + x + '" y="' + (top + innerH - 2) + '" width="' + barW + '" height="2" fill="#e0dcd3" rx="1"></rect>');
+      }
+      if (showLabel && d.total > 0) {
+        parts.push('<text x="' + (x + barW / 2) + '" y="' + (yTotalTop - 6) + '" text-anchor="middle" font-size="11" fill="rgba(31,31,31,.6)">' + d.total + '</text>');
+      }
+      if (i % labelEvery === 0 || i === n - 1) {
+        parts.push('<text x="' + (x + barW / 2) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="rgba(31,31,31,.55)">' + koFmtDate(d.date) + '</text>');
+      }
+    });
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.innerHTML = parts.join("");
+  }
+
+  function koRenderTable(days) {
+    var tbody = document.querySelector("#koTable tbody");
+    if (!tbody) return;
+    var rows = days.slice().reverse(); // сегодня первым — как просил Александр
+    tbody.innerHTML = rows.map(function (d) {
+      return "<tr><td>" + koFmtDate(d.date) + "</td>" +
+        '<td class="ko-num">' + d.total + "</td>" +
+        '<td class="ko-num">' + d.repeat + "</td>" +
+        '<td class="ko-num">' + d.repeatPct + "%</td></tr>";
+    }).join("");
+  }
+
+  function loadKaspiOrdersStats() {
+    fetch("/api/kaspi-orders/daily-stats?days=30").then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.ok || !res.days) return;
+      koRenderSummary(res.days);
+      koRenderChart(res.days);
+      koRenderTable(res.days);
+    }).catch(function () {});
+  }
+
+  function initKaspiOrdersTab() {
+    var tabBtn = document.querySelector('.tab[data-tab="kaspiOrders"]');
+    if (tabBtn) {
+      tabBtn.addEventListener("click", function () {
+        if (!kaspiOrdersLoaded) {
+          kaspiOrdersLoaded = true;
+          loadKaspiOrdersStats();
+        }
+      });
+    }
+  }
+
   /* ---------------- Kaspi: безопасный тест переноса на 1 заказе ---------------- */
   function initKaspiTest() {
     var input = document.getElementById("kaspiTestOrderId");
@@ -931,6 +1026,7 @@
     initEmployeesTab();
     initKaspiTest();
     initKaspiSession();
+    initKaspiOrdersTab();
 
     fetch("/api/me").then(function (r) { return r.json(); }).then(function (me) {
       if (!me.authed) { window.location.href = "/login.html"; return; }
