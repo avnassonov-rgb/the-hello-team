@@ -52,6 +52,15 @@ const DEFAULT_STATE = {
   employeeRoles: [
     { name: "Зав.складом", description: "Получает накладные (стикеры) по заказам Kaspi в Telegram." },
   ],
+  // ---- Клиенты Kaspi: по каждому уникальному клиенту (ключ — телефон, либо
+  // имя+город, если телефона нет) храним ТОЛЬКО дату первого известного
+  // заказа и счётчики — не весь список заказов, чтобы файл не рос вечно.
+  // Собирается с 2026-09-23 — заказы до этой даты не учтены (у Kaspi API нет
+  // полного архива, статистика копится только вперёд). ----
+  kaspiCustomers: {}, // key -> { name, phone, city, firstSeenDate, lastSeenDate, ordersCount }
+  // ---- Заказы Kaspi по дням: { total, repeat } — используется для графика
+  // "все заказы по дням" + "% повторных" на вкладке "Каспи заказы". ----
+  kaspiDailyOrderStats: {}, // "YYYY-MM-DD" -> { total, repeat }
 };
 
 const MAX_BITRIX_EVENTS = 5000;
@@ -263,6 +272,66 @@ function findEmployeeByTelegramId(telegramId) {
   return getEmployees().find((e) => String(e.telegramId || "") === id) || null;
 }
 
+// ---- Клиенты Kaspi + статистика заказов по дням ----
+// key — уже нормализованный ключ клиента (см. customerHistory.js), не строим
+// нормализацию здесь — store.js только хранит.
+// date — "YYYY-MM-DD" (локальный день заказа, Костанай).
+// Возвращает { isRepeat } — true, если у этого ключа уже был заказ РАНЬШЕ date.
+function recordKaspiCustomerOrder(key, info, date) {
+  const state = readState();
+  const customers = Object.assign({}, state.kaspiCustomers || {});
+  const existing = customers[key];
+  let isRepeat = false;
+
+  if (!existing) {
+    customers[key] = {
+      name: info.name || null,
+      phone: info.phone || null,
+      city: info.city || null,
+      firstSeenDate: date,
+      lastSeenDate: date,
+      ordersCount: 1,
+    };
+  } else {
+    isRepeat = existing.firstSeenDate < date;
+    if (existing.firstSeenDate > date) existing.firstSeenDate = date; // подстраховка на случай "заказ из прошлого"
+    existing.lastSeenDate = date > existing.lastSeenDate ? date : existing.lastSeenDate;
+    existing.ordersCount = (existing.ordersCount || 0) + 1;
+    // Обновляем имя/телефон/город на более свежие, если раньше их не было
+    if (!existing.name && info.name) existing.name = info.name;
+    if (!existing.phone && info.phone) existing.phone = info.phone;
+    if (!existing.city && info.city) existing.city = info.city;
+    customers[key] = existing;
+  }
+
+  const daily = Object.assign({}, state.kaspiDailyOrderStats || {});
+  const day = Object.assign({ total: 0, repeat: 0 }, daily[date] || {});
+  day.total += 1;
+  if (isRepeat) day.repeat += 1;
+  daily[date] = day;
+
+  patchState({ kaspiCustomers: customers, kaspiDailyOrderStats: daily });
+  return { isRepeat };
+}
+// Для заказов, где не удалось определить клиента (нет ни телефона, ни имени) —
+// увеличиваем только "всего", без участия в подсчёте повторных.
+function incrementKaspiDailyTotal(date) {
+  const state = readState();
+  const daily = Object.assign({}, state.kaspiDailyOrderStats || {});
+  const day = Object.assign({ total: 0, repeat: 0 }, daily[date] || {});
+  day.total += 1;
+  daily[date] = day;
+  patchState({ kaspiDailyOrderStats: daily });
+}
+function getKaspiDailyOrderStats() {
+  const state = readState();
+  return state.kaspiDailyOrderStats || {};
+}
+function getKaspiCustomers() {
+  const state = readState();
+  return state.kaspiCustomers || {};
+}
+
 function readState() {
   ensureDir();
   if (!fs.existsSync(STATE_FILE)) return Object.assign({}, DEFAULT_STATE);
@@ -297,6 +366,7 @@ module.exports = {
   getKaspiCargoSession, setKaspiCargoSession,
   getKaspiAssemblyPending, addToKaspiAssemblyPending, removeFromKaspiAssemblyPending,
   getKaspiWaybillPending, addToKaspiWaybillPending, removeFromKaspiWaybillPending,
+  recordKaspiCustomerOrder, incrementKaspiDailyTotal, getKaspiDailyOrderStats, getKaspiCustomers,
   getKaspiTransferState, isKaspiOrderProcessed, markKaspiOrdersProcessed, setKaspiTransferRunMeta,
   unmarkKaspiOrderProcessed,
   getEmployees, getEmployeeRoles, saveEmployeeRoles, addEmployee, updateEmployee, deleteEmployee,

@@ -30,6 +30,7 @@ const oneC = require("./oneC");
 const mappingTable = require("./mappingTable");
 const priceTable = require("./priceTable");
 const store = require("./store");
+const customerHistory = require("./customerHistory");
 const telegram = require("./telegram");
 
 function norm(s) {
@@ -741,6 +742,11 @@ async function runKaspiTransfer(options) {
 
     created++;
     processedThisRun.push(order.id);
+
+    // Учёт клиента для статистики "повторные заказы" на вкладке "Каспи
+    // заказы" (см. customerHistory.js) — не должен ронять перенос, ошибки
+    // тут только логируются.
+    customerHistory.recordOrder(attrs);
 
     // Дополнительная пауза перед ASSEMBLE — снижаем нагрузку на Kaspi API
     await sleep(1000);

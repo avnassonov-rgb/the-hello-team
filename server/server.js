@@ -295,6 +295,38 @@ const server = http.createServer((req, res) => {
     if (pathname === "/api/kaspi-transfer/status" && req.method === "GET") {
       return sendJSON(res, 200, { ok: true, state: store.getKaspiTransferState() });
     }
+    if (pathname === "/api/kaspi-orders/daily-stats" && req.method === "GET") {
+      // Заказы Kaspi по дням + повторные — для вкладки "Каспи заказы".
+      // Собирается с 2026-09-23 (см. customerHistory.js), за более ранние
+      // дни данных нет — отдаём нули, а не ошибку.
+      const q = parsed.query || {};
+      const days = Math.min(Math.max(parseInt(q.days, 10) || 30, 1), 90);
+      const stats = store.getKaspiDailyOrderStats();
+      const KOSTANAY_OFFSET_MS = 5 * 60 * 60 * 1000;
+      const todayKostanay = new Date(Date.now() + KOSTANAY_OFFSET_MS).toISOString().slice(0, 10);
+      const todayMs = new Date(todayKostanay + "T00:00:00Z").getTime();
+      const out = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(todayMs - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const day = stats[d] || { total: 0, repeat: 0 };
+        const total = day.total || 0;
+        const repeat = day.repeat || 0;
+        out.push({
+          date: d,
+          total,
+          repeat,
+          repeatPct: total > 0 ? Math.round((repeat / total) * 1000) / 10 : 0,
+        });
+      }
+      return sendJSON(res, 200, { ok: true, days: out });
+    }
+    if (pathname === "/api/kaspi-orders/customers" && req.method === "GET") {
+      // Список известных клиентов (для отладки/будущей таблицы "постоянные клиенты").
+      const customers = store.getKaspiCustomers();
+      const list = Object.keys(customers).map((key) => Object.assign({ key }, customers[key]));
+      list.sort((a, b) => (b.ordersCount || 0) - (a.ordersCount || 0));
+      return sendJSON(res, 200, { ok: true, customers: list });
+    }
     if (pathname === "/api/onec/metadata" && req.method === "GET") {
       const q = parsed.query || {};
       const substr = q.entity || "РеализацияТоваровУслуг";
