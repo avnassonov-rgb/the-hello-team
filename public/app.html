@@ -24,6 +24,10 @@
         <span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.78 2-1.85 0-.5-.2-.95-.52-1.3-.3-.32-.48-.74-.48-1.2 0-.95.8-1.7 1.78-1.7H16.5A4.5 4.5 0 0 0 21 10.5C21 6 17 3 12 3Z"/><circle cx="7.5" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.5" cy="7.2" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="7.2" r="1.1" fill="currentColor" stroke="none"/></svg></span>
         <span class="tab-lbl">Kaspi магазин</span>
       </button>
+      <button class="tab" data-tab="kaspiOrders" title="Каспи заказы">
+        <span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20V13"/></svg></span>
+        <span class="tab-lbl">Каспи заказы</span>
+      </button>
       <button class="tab" data-tab="managers" title="Менеджеры">
         <span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.8 19c.5-3 2.9-5 6.2-5s5.7 2 6.2 5"/><path d="M15.5 5.2c1.5.3 2.6 1.6 2.6 3.1 0 1.5-1.1 2.8-2.6 3.1"/><path d="M16.3 14.2c2.4.5 4.1 2.2 4.5 4.6"/></svg></span>
         <span class="tab-lbl">Менеджеры</span>
@@ -111,6 +115,36 @@
         </div>
       </div>
       <pre id="kaspiSessionResult" class="hidden" style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:16px;margin-top:16px;font-size:13px;line-height:1.5;"></pre>
+    </div>
+
+    <div class="banner-wrap no-print" style="margin-top:var(--gap);">
+      <img class="banner-img" src="/img/banner.png" alt="THE HELLO Team">
+    </div>
+  </section>
+
+  <section id="tab-kaspiOrders" class="tabpanel hidden">
+    <div class="card">
+      <div class="plan-head">
+        <h2><span class="pill-tag">Каспи заказы</span> <span class="sub">— заказы по дням и доля повторных клиентов</span></h2>
+      </div>
+      <p class="mgr-note" id="koIntro">Статистика собирается с 23.09.2026 — за более ранние дни данных нет (у Kaspi API нет полного архива заказов).</p>
+
+      <div class="ko-summary" id="koSummary"></div>
+
+      <div class="ko-chart-wrap">
+        <svg id="koChart" class="ko-chart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
+        <div class="ko-legend">
+          <span><i class="ko-dot ko-dot-pink"></i> Новые заказы</span>
+          <span><i class="ko-dot ko-dot-dark"></i> Повторные заказы</span>
+        </div>
+      </div>
+
+      <div class="ko-table-wrap">
+        <table class="ko-table" id="koTable">
+          <thead><tr><th>Дата</th><th>Всего заказов</th><th>Повторных</th><th>% повторных</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="banner-wrap no-print" style="margin-top:var(--gap);">
