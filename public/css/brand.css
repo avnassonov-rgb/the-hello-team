@@ -417,3 +417,30 @@ details.panel[open]>summary::before{transform:rotate(90deg);}
   .appfooter{padding:24px 16px;border-radius:28px;}
   .appfooter-text{font-size:24px;}
 }
+
+/* ---------- вкладка «Каспи заказы» ---------- */
+.ko-summary{display:flex;gap:var(--gap);flex-wrap:wrap;margin:18px 0 26px;}
+.ko-stat{flex:1;min-width:180px;background:var(--chip);border-radius:24px;padding:18px 22px;}
+.ko-stat .ko-stat-num{font-size:44px;font-weight:500;color:var(--ink);line-height:1;letter-spacing:-.01em;}
+.ko-stat .ko-stat-cap{font-size:13.5px;font-weight:500;color:rgba(31,31,31,.65);margin-top:6px;}
+.ko-stat.pink{background:var(--pink);}
+.ko-stat.pink .ko-stat-num,.ko-stat.pink .ko-stat-cap{color:#fff;}
+
+.ko-chart-wrap{margin-bottom:22px;}
+.ko-chart{width:100%;height:280px;display:block;}
+.ko-legend{display:flex;gap:22px;justify-content:flex-end;margin-top:8px;font-size:12.5px;color:rgba(31,31,31,.65);}
+.ko-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+.ko-dot-pink{background:var(--pink);}
+.ko-dot-dark{background:var(--ink);}
+
+.ko-table-wrap{overflow-x:auto;}
+.ko-table{width:100%;border-collapse:collapse;font-size:13.5px;}
+.ko-table th{text-align:left;padding:10px 14px;color:rgba(31,31,31,.55);font-weight:600;border-bottom:1.5px solid var(--chip);white-space:nowrap;}
+.ko-table td{padding:10px 14px;border-bottom:1px solid var(--chip);white-space:nowrap;}
+.ko-table tr:last-child td{border-bottom:none;}
+.ko-table td.ko-num{font-variant-numeric:tabular-nums;}
+
+@media (max-width:699px){
+  .ko-summary{flex-direction:column;}
+  .ko-chart{height:200px;}
+}
