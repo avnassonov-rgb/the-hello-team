@@ -14,6 +14,7 @@ const oneC = require("./oneC");
 const kaspi = require("./kaspi");
 const telegram = require("./telegram");
 const kaspiTransfer = require("./kaspiTransfer");
+const bloggers = require("./bloggers");
 
 const INSTALL_HTML = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
   "<title>THE HELLO — установка приложения</title></head>" +
@@ -295,6 +296,17 @@ const server = http.createServer((req, res) => {
     if (pathname === "/api/kaspi-transfer/status" && req.method === "GET") {
       return sendJSON(res, 200, { ok: true, state: store.getKaspiTransferState() });
     }
+    if (pathname === "/api/bloggers/report" && req.method === "GET") {
+      // Отчёт по блогерам по неделям (лист «$$$» из Google Таблицы).
+      const q = parsed.query || {};
+      const weeks = Math.min(Math.max(parseInt(q.weeks, 10) || 12, 1), 60);
+      return bloggers.getReport(weeks, q.refresh === "1").then(function (rep) {
+        return sendJSON(res, 200, Object.assign({ ok: true }, rep));
+      }).catch(function (e) {
+        return sendJSON(res, 200, { ok: false, configured: true, error: e.message });
+      });
+    }
+
     if (pathname === "/api/kaspi-orders/daily-stats" && req.method === "GET") {
       // Заказы Kaspi по дням + повторные — для вкладки "Каспи заказы".
       // Собирается с 2026-09-23 (см. customerHistory.js), за более ранние
