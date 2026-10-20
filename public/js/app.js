@@ -927,16 +927,16 @@
   function blRenderKpis(d) {
     var wk = d.weeks, cur = wk[wk.length - 1], prev = wk.length > 1 ? wk[wk.length - 2] : null;
     var dp = prev ? blDelta(cur.budget, prev.budget) : null;
-    var dc = prev ? blDelta(cur.paidCount, prev.paidCount) : null;
+    var dc = prev ? blDelta(cur.count, prev.count) : null;
     var html =
       '<div class="bl-kpi accent"><div class="v num">' + fmtMoney(cur.budget) + ' ₸</div><div class="c">Бюджет текущей недели (' + blWeekLabel(cur) + ')</div>' +
       '<div class="d">' + (dp == null ? "нет данных за прошлую неделю" : (dp >= 0 ? "▲ +" : "▼ ") + dp + "% к прошлой неделе") + '</div></div>' +
-      '<div class="bl-kpi"><div class="v num">' + cur.paidCount + '</div><div class="c">Платных блогеров на этой неделе</div>' +
+      '<div class="bl-kpi"><div class="v num">' + cur.count + '</div><div class="c">Блогеров на этой неделе</div>' +
       '<div class="d ' + (dc == null ? "" : dc >= 0 ? "up" : "down") + '">' + (dc == null ? "" : (dc >= 0 ? "▲ +" : "▼ ") + dc + "% к прошлой") + '</div></div>' +
       '<div class="bl-kpi"><div class="v num">' + fmtMoney(d.totals.budget) + ' ₸</div><div class="c">Бюджет за период (' + d.totals.weeks + ' нед.)</div>' +
-      '<div class="d">' + d.totals.paidCount + ' платных · ' + d.totals.barterCount + ' бартер</div></div>' +
-      '<div class="bl-kpi"><div class="v num">' + fmtMoney(d.totals.avg) + ' ₸</div><div class="c">Средняя цена размещения</div>' +
-      '<div class="d">ждём выхода: ' + d.totals.waitingCount + '</div></div>';
+      '<div class="d">гели ' + fmtMoney(d.totals.gelBudget) + ' · спреи ' + fmtMoney(d.totals.sprayBudget) + '</div></div>' +
+      '<div class="bl-kpi"><div class="v num">' + fmtMoney(d.totals.avg) + ' ₸</div><div class="c">Средний бюджет на блогера</div>' +
+      '<div class="d">всего блогеров ' + d.totals.count + ' · гели ' + d.totals.gelCount + ' · спреи ' + d.totals.sprayCount + '</div></div>';
     document.getElementById("blKpis").innerHTML = html;
   }
 
@@ -948,7 +948,7 @@
     var iw = W - left - right, ih = H - top - bottom, n = wk.length;
     var step = iw / n, barW = Math.max(6, Math.min(48, step * 0.6));
     var maxB = Math.max(1, Math.max.apply(null, wk.map(function (w) { return w.budget; })));
-    var maxC = Math.max(1, Math.max.apply(null, wk.map(function (w) { return w.paidCount; })));
+    var maxC = Math.max(1, Math.max.apply(null, wk.map(function (w) { return w.count; })));
     function niceMax(v) { var p = Math.pow(10, Math.floor(Math.log10(v))); var m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
     var yMax = niceMax(maxB), cMax = Math.max(4, Math.ceil(maxC * 1.15));
     var parts = [];
@@ -963,8 +963,8 @@
     wk.forEach(function (w, i) {
       var cx = left + i * step + step / 2;
       var bh = (w.budget / yMax) * ih;
-      parts.push('<rect x="' + (cx - barW / 2) + '" y="' + (top + ih - bh) + '" width="' + barW + '" height="' + Math.max(bh, w.budget ? 2 : 0) + '" rx="5" fill="var(--petal)" opacity="' + (i === n - 1 ? 1 : .85) + '"><title>' + blWeekLabel(w) + ": " + fmtMoney(w.budget) + ' ₸, платных: ' + w.paidCount + '</title></rect>');
-      pts.push([cx, top + ih - (w.paidCount / cMax) * ih]);
+      parts.push('<rect x="' + (cx - barW / 2) + '" y="' + (top + ih - bh) + '" width="' + barW + '" height="' + Math.max(bh, w.budget ? 2 : 0) + '" rx="5" fill="var(--petal)" opacity="' + (i === n - 1 ? 1 : .85) + '"><title>' + blWeekLabel(w) + ": " + fmtMoney(w.budget) + ' ₸, блогеров: ' + w.count + '</title></rect>');
+      pts.push([cx, top + ih - (w.count / cMax) * ih]);
       if (i % every === 0 || i === n - 1) {
         parts.push('<text x="' + cx + '" y="' + (H - 12) + '" text-anchor="middle" font-size="10.5" fill="var(--muted)">' + blDay(w.start) + " " + blMon(w.start) + '</text>');
       }
@@ -972,7 +972,7 @@
     parts.push('<polyline points="' + pts.map(function (p) { return p[0] + "," + p[1]; }).join(" ") + '" fill="none" stroke="var(--raspberry)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>');
     pts.forEach(function (p, i) {
       parts.push('<circle cx="' + p[0] + '" cy="' + p[1] + '" r="4" fill="var(--surface)" stroke="var(--raspberry)" stroke-width="2.5"></circle>');
-      if (n <= 20 && wk[i].paidCount > 0) parts.push('<text x="' + p[0] + '" y="' + (p[1] - 9) + '" text-anchor="middle" font-size="11" font-weight="700" fill="var(--accent-text)">' + wk[i].paidCount + '</text>');
+      if (n <= 20 && wk[i].count > 0) parts.push('<text x="' + p[0] + '" y="' + (p[1] - 9) + '" text-anchor="middle" font-size="11" font-weight="700" fill="var(--accent-text)">' + wk[i].count + '</text>');
     });
     svg.setAttribute("viewBox", "0 0 " + W + " " + H);
     svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
@@ -989,13 +989,13 @@
       var w = wk[i], prev = i > 0 ? wk[i - 1] : null;
       var dp = prev ? blDelta(w.budget, prev.budget) : null;
       rows.push('<tr class="wk' + (i === wk.length - 1 ? " cur" : "") + '" data-i="' + i + '"><td>' + blWeekLabel(w) + (i === wk.length - 1 ? " (сейчас)" : "") + '</td>' +
-        '<td class="r">' + w.paidCount + '</td><td class="r">' + w.barterCount + '</td><td class="r">' + w.cancelledCount + '</td>' +
-        '<td class="r">' + fmtMoney(w.budget) + '</td><td class="r">' + fmtMoney(w.avg) + '</td><td class="r">' + blDeltaHtml(dp) + '</td></tr>');
-      var inner = w.bloggers.length ? '<table><thead><tr><th>Дата</th><th>Блогер</th><th>Город</th><th class="r">Подписчики</th><th>Товар</th><th class="r">Цена, ₸</th><th>Статус</th></tr></thead><tbody>' +
+        '<td class="r"><b>' + w.count + '</b></td><td class="r">' + w.gelCount + '</td><td class="r">' + w.sprayCount + '</td>' +
+        '<td class="r"><b>' + fmtMoney(w.budget) + '</b></td><td class="r">' + fmtMoney(w.gelBudget) + '</td><td class="r">' + fmtMoney(w.sprayBudget) + '</td><td class="r">' + blDeltaHtml(dp) + '</td></tr>');
+      var inner = w.bloggers.length ? '<table><thead><tr><th>Дата</th><th>Блогер</th><th>Город</th><th class="r">Подписчики</th><th>Товар</th><th class="r">Размещение, ₸</th><th class="r">Себес, ₸</th><th class="r">Бюджет, ₸</th><th>Статус</th></tr></thead><tbody>' +
         w.bloggers.map(function (b) {
-          return "<tr><td>" + blShortDate(b.date) + "</td><td>" + esc(b.nick) + (b.fullName ? ' <span style="color:var(--muted)">· ' + esc(b.fullName) + "</span>" : "") + "</td><td>" + esc(b.city) + '</td><td class="r">' + fmtMoney(b.followers) + "</td><td>" + esc(b.product) + '</td><td class="r">' + (b.barter ? "бартер" : fmtMoney(b.price)) + '</td><td><span class="bl-badge ' + b.kind + '">' + esc(b.status || KIND_RU[b.kind]) + "</span></td></tr>";
+          return "<tr><td>" + blShortDate(b.date) + "</td><td>" + esc(b.nick) + (b.fullName ? ' <span style="color:var(--muted)">· ' + esc(b.fullName) + "</span>" : "") + "</td><td>" + esc(b.city) + '</td><td class="r">' + fmtMoney(b.followers) + "</td><td>" + esc(b.product) + '</td><td class="r">' + (b.barter ? "бартер" : fmtMoney(b.price)) + '</td><td class="r">' + fmtMoney(b.cost) + '</td><td class="r">' + fmtMoney(b.total) + '</td><td><span class="bl-badge ' + b.kind + '">' + esc(b.status || KIND_RU[b.kind]) + "</span></td></tr>";
         }).join("") + "</tbody></table>" : '<div class="mgr-msg">В эту неделю договорённостей нет.</div>';
-      rows.push('<tr class="detail hidden" data-d="' + i + '"><td colspan="7"><div class="bl-detail">' + inner + "</div></td></tr>");
+      rows.push('<tr class="detail hidden" data-d="' + i + '"><td colspan="8"><div class="bl-detail">' + inner + "</div></td></tr>");
     }
     tbody.innerHTML = rows.join("");
     $all("#blTable tr.wk").forEach(function (tr) {
@@ -1023,7 +1023,14 @@
       setup.classList.add("hidden"); main.classList.remove("hidden");
       if (!d.ok) { blShowMsg("Не удалось прочитать таблицу: " + (d.error || "ошибка")); return; }
       blData = d;
-      blShowMsg(d.stale ? "Показаны сохранённые данные (таблица сейчас недоступна: " + d.stale + ")" : "");
+      var tot = d.totals.count;
+      if (d.diag && d.diag.parsedRows === 0) {
+        blShowMsg("Таблица прочитана, но ни одна дата не распознана. Строк в файле: " + d.diag.rawRows + (d.diag.looksHtml ? ". Ссылка ведёт на веб-страницу, а не на CSV — опубликуйте лист в формате CSV." : ". Первые значения колонки A: " + (d.diag.sampleA || []).join(" | ")));
+      } else if (!tot && d.diag) {
+        blShowMsg("Распознано строк: " + d.diag.parsedRows + ", но за выбранный период договорённостей нет — выберите «Всё».");
+      }
+      if (d.stale) blShowMsg("Показаны сохранённые данные (таблица сейчас недоступна: " + d.stale + ")");
+      else if (tot || !d.diag) blShowMsg("");
       blRenderKpis(d);
       blRenderChart(d);
       blRenderTable(d);
