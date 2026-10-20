@@ -26,6 +26,14 @@
   }
 
   /* ---------------- вкладки ---------------- */
+  var PAGE_TITLES = {
+    main: ["Главная", "THE HELLO Team · рабочий дашборд"],
+    plan: ["План производства", "Заказы к отгрузке и что нужно произвести"],
+    kaspi: ["Ручной перенос Kaspi", "Проверка и ручной запуск переноса заказов в 1С"],
+    managers: ["Менеджеры", "Эффективность менеджеров из Bitrix24"],
+    bloggers: ["Блогеры", "Договорённости и бюджет по неделям"],
+    employees: ["Сотрудники", "Роли и Telegram-ID для бота «Наталья»"]
+  };
   function initTabs() {
     $all(".tabbar .tab").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -35,6 +43,19 @@
         $all(".tabpanel").forEach(function (p) { p.classList.add("hidden"); });
         var panel = document.getElementById("tab-" + name);
         if (panel) panel.classList.remove("hidden");
+        var t = PAGE_TITLES[name];
+        if (t) {
+          document.getElementById("pageTitle").textContent = t[0];
+          document.getElementById("pageSub").textContent = t[1];
+        }
+        window.scrollTo(0, 0);
+      });
+    });
+    // плитки на главной — то же самое, что клик по пункту меню
+    $all("[data-goto]").forEach(function (tile) {
+      tile.addEventListener("click", function () {
+        var b = document.querySelector('.tabbar .tab[data-tab="' + tile.getAttribute("data-goto") + '"]');
+        if (b) b.click();
       });
     });
   }
@@ -269,6 +290,10 @@
     document.getElementById("kpiOrders").textContent = computed.totals.ordersCount.toLocaleString("ru-RU");
     document.getElementById("kpiFires").textContent = computed.totals.firesCount.toLocaleString("ru-RU");
     document.getElementById("kpiUnits").textContent = E.fmtNum(computed.totals.units);
+    var hO = document.getElementById("heroOrders"), hF = document.getElementById("heroFires"), hU = document.getElementById("heroUnits");
+    if (hO) hO.textContent = computed.totals.ordersCount.toLocaleString("ru-RU");
+    if (hF) hF.textContent = computed.totals.firesCount.toLocaleString("ru-RU");
+    if (hU) hU.textContent = E.fmtNum(computed.totals.units);
     document.getElementById("kpiTons").textContent = E.fmtT(computed.totals.totalKg / 1000);
   }
 
@@ -452,7 +477,7 @@
 
   // Палитра-заглушка для этапов, у которых Bitrix24 не вернул цвет (COLOR) —
   // не влияет на этапы, у которых цвет известен (там используется цвет как в канбане).
-  var MGR_FALLBACK_PALETTE = ["#85D0F2", "#F4367F", "#594C51", "#7FD8A4", "#FFC36E", "#B6A4E8", "#FF8FA3", "#6EC6CA"];
+  var MGR_FALLBACK_PALETTE = ["#E50562", "#FA719A", "#8E6A79", "#C4044F", "#FAAFC5", "#B83A6E", "#FF8FB3", "#6E3A52"];
   function mgrFallbackColor(idx) { return MGR_FALLBACK_PALETTE[idx % MGR_FALLBACK_PALETTE.length]; }
 
   // Подбирает чёрный/белый текст по яркости фона, чтобы цифра в цветном сегменте читалась.
@@ -810,101 +835,6 @@
     }
   }
 
-  /* ---------------- Каспи заказы: по дням + повторные клиенты ---------------- */
-  var kaspiOrdersLoaded = false;
-
-  function koFmtDate(iso) {
-    var p = iso.split("-");
-    return p[2] + "." + p[1];
-  }
-
-  function koRenderSummary(days) {
-    var wrap = document.getElementById("koSummary");
-    if (!wrap || !days.length) return;
-    var today = days[days.length - 1];
-    var sum30Total = days.reduce(function (a, d) { return a + d.total; }, 0);
-    var sum30Repeat = days.reduce(function (a, d) { return a + d.repeat; }, 0);
-    var avgPct = sum30Total > 0 ? Math.round((sum30Repeat / sum30Total) * 1000) / 10 : 0;
-    wrap.innerHTML =
-      '<div class="ko-stat pink"><div class="ko-stat-num">' + today.total + '</div><div class="ko-stat-cap">Заказов сегодня</div></div>' +
-      '<div class="ko-stat"><div class="ko-stat-num">' + today.repeat + '</div><div class="ko-stat-cap">Повторных сегодня (' + today.repeatPct + '%)</div></div>' +
-      '<div class="ko-stat"><div class="ko-stat-num">' + avgPct + '%</div><div class="ko-stat-cap">Доля повторных за период</div></div>';
-  }
-
-  function koRenderChart(days) {
-    var svg = document.getElementById("koChart");
-    if (!svg || !days.length) return;
-    var W = 900, H = 320, left = 8, right = 8, top = 28, bottom = 26;
-    var innerW = W - left - right, innerH = H - top - bottom;
-    var n = days.length;
-    var step = innerW / n;
-    var barW = Math.max(2, step * 0.62);
-    var maxVal = Math.max(1, Math.max.apply(null, days.map(function (d) { return d.total; })));
-    var scale = innerH / maxVal;
-    var showLabel = barW >= 16;
-    var labelEvery = barW >= 20 ? 1 : Math.ceil(20 / step);
-    var parts = [];
-    days.forEach(function (d, i) {
-      var x = left + i * step + (step - barW) / 2;
-      var totalH = d.total * scale;
-      var repeatH = d.repeat * scale;
-      var newH = totalH - repeatH;
-      var yTotalTop = top + (innerH - totalH);
-      var yRepeatTop = yTotalTop;
-      var yNewTop = yTotalTop + repeatH;
-      if (repeatH > 0) {
-        parts.push('<rect x="' + x + '" y="' + yRepeatTop + '" width="' + barW + '" height="' + repeatH + '" fill="var(--ink)" rx="3"></rect>');
-      }
-      if (newH > 0) {
-        parts.push('<rect x="' + x + '" y="' + yNewTop + '" width="' + barW + '" height="' + newH + '" fill="var(--pink)" rx="3"></rect>');
-      }
-      if (d.total === 0) {
-        parts.push('<rect x="' + x + '" y="' + (top + innerH - 2) + '" width="' + barW + '" height="2" fill="#e0dcd3" rx="1"></rect>');
-      }
-      if (showLabel && d.total > 0) {
-        parts.push('<text x="' + (x + barW / 2) + '" y="' + (yTotalTop - 6) + '" text-anchor="middle" font-size="11" fill="rgba(31,31,31,.6)">' + d.total + '</text>');
-      }
-      if (i % labelEvery === 0 || i === n - 1) {
-        parts.push('<text x="' + (x + barW / 2) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="rgba(31,31,31,.55)">' + koFmtDate(d.date) + '</text>');
-      }
-    });
-    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
-    svg.innerHTML = parts.join("");
-  }
-
-  function koRenderTable(days) {
-    var tbody = document.querySelector("#koTable tbody");
-    if (!tbody) return;
-    var rows = days.slice().reverse(); // сегодня первым — как просил Александр
-    tbody.innerHTML = rows.map(function (d) {
-      return "<tr><td>" + koFmtDate(d.date) + "</td>" +
-        '<td class="ko-num">' + d.total + "</td>" +
-        '<td class="ko-num">' + d.repeat + "</td>" +
-        '<td class="ko-num">' + d.repeatPct + "%</td></tr>";
-    }).join("");
-  }
-
-  function loadKaspiOrdersStats() {
-    fetch("/api/kaspi-orders/daily-stats?days=30").then(function (r) { return r.json(); }).then(function (res) {
-      if (!res || !res.ok || !res.days) return;
-      koRenderSummary(res.days);
-      koRenderChart(res.days);
-      koRenderTable(res.days);
-    }).catch(function () {});
-  }
-
-  function initKaspiOrdersTab() {
-    var tabBtn = document.querySelector('.tab[data-tab="kaspiOrders"]');
-    if (tabBtn) {
-      tabBtn.addEventListener("click", function () {
-        if (!kaspiOrdersLoaded) {
-          kaspiOrdersLoaded = true;
-          loadKaspiOrdersStats();
-        }
-      });
-    }
-  }
-
   /* ---------------- Kaspi: безопасный тест переноса на 1 заказе ---------------- */
   function initKaspiTest() {
     var input = document.getElementById("kaspiTestOrderId");
@@ -946,61 +876,15 @@
     realBtn.addEventListener("click", function () { runTest(false); });
   }
 
-  /* ---------------- Kaspi CARGO: обновление сессии и ручной запуск переноса ---------------- */
-  function initKaspiSession() {
-    var statusDiv = document.getElementById("kaspiSessionStatus");
-    var saveBtn = document.getElementById("kaspiSaveSessionBtn");
+  /* ---------------- Kaspi: ручной запуск переноса всех заказов ---------------- */
+  function initKaspiRun() {
     var runBtn = document.getElementById("kaspiRunTransferBtn");
     var resultBox = document.getElementById("kaspiSessionResult");
-    if (!saveBtn || !runBtn || !resultBox) return;
-
+    if (!runBtn || !resultBox) return;
     function showResult(text) {
       resultBox.textContent = text;
       resultBox.classList.remove("hidden");
     }
-
-    // Показываем статус текущей сессии
-    fetch("/api/kaspi/cargo-session")
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (!statusDiv) return;
-        if (d.hasSession && d.updatedAt) {
-          var dt = new Date(d.updatedAt);
-          statusDiv.textContent = "✅ Сессия сохранена: " + dt.toLocaleString("ru-RU");
-          statusDiv.style.color = "#3a9c5a";
-        } else {
-          statusDiv.textContent = "⚠️ Сессия не сохранена — заполните поля ниже";
-          statusDiv.style.color = "#c07a00";
-        }
-      })
-      .catch(function () {});
-
-    saveBtn.addEventListener("click", function () {
-      var mcSession = (document.getElementById("kaspiMcSession").value || "").trim();
-      var mcSid = (document.getElementById("kaspiMcSid").value || "").trim();
-      if (!mcSession) { alert("Введите значение mc-session"); return; }
-      saveBtn.disabled = true;
-      saveBtn.textContent = "Сохраняю…";
-      fetch("/api/kaspi/cargo-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mcSession: mcSession, mcSid: mcSid }),
-      })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d.ok) {
-            if (statusDiv) { statusDiv.textContent = "✅ Сессия сохранена: " + new Date().toLocaleString("ru-RU"); statusDiv.style.color = "#3a9c5a"; }
-            document.getElementById("kaspiMcSession").value = "";
-            document.getElementById("kaspiMcSid").value = "";
-            showResult("✅ Куки сохранены. CARGO-заказы будут обрабатываться с новой сессией.\n\nМожете нажать «Запустить перенос сейчас» чтобы сразу обработать ожидающие заказы.");
-          } else {
-            showResult("❌ Ошибка: " + (d.error || "неизвестная ошибка"));
-          }
-        })
-        .catch(function (e) { showResult("❌ Ошибка сети: " + e.message); })
-        .finally(function () { saveBtn.disabled = false; saveBtn.textContent = "Сохранить куки"; });
-    });
-
     runBtn.addEventListener("click", function () {
       if (!confirm("Запустить перенос всех заказов Kaspi → 1С прямо сейчас?")) return;
       runBtn.disabled = true;
@@ -1009,10 +893,177 @@
       fetch("/api/kaspi-transfer/run", { method: "POST" })
         .then(function (r) { return r.json(); })
         .then(function (j) { showResult(JSON.stringify(j, null, 2)); })
-        .catch(function (e) { showResult("❌ Ошибка соединения: " + e.message); })
+        .catch(function (e) { showResult("Ошибка соединения: " + e.message); })
         .finally(function () { runBtn.disabled = false; runBtn.textContent = "▶ Запустить перенос сейчас"; });
     });
   }
+
+  /* ---------------- Блогеры: отчёт по неделям ---------------- */
+  var blWeeks = 12;
+  var blLoaded = false;
+  var blData = null;
+  var MON = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
+  }
+  function fmtMoney(n) { return Math.round(n || 0).toLocaleString("ru-RU").replace(/ /g, " "); }
+  function blDay(iso) { var p = iso.split("-"); return parseInt(p[2], 10); }
+  function blMon(iso) { return MON[parseInt(iso.split("-")[1], 10) - 1]; }
+  function blWeekLabel(w) {
+    var sm = blMon(w.start), em = blMon(w.end);
+    return blDay(w.start) + (sm !== em ? " " + sm : "") + "–" + blDay(w.end) + " " + em;
+  }
+  function blShortDate(iso) { return blDay(iso) + " " + blMon(iso); }
+  function blDelta(cur, prev) {
+    if (!prev) return null;
+    return Math.round(((cur - prev) / prev) * 100);
+  }
+  function blDeltaHtml(p) {
+    if (p == null) return "—";
+    return '<span class="d ' + (p >= 0 ? "up" : "down") + '" style="font-size:inherit;margin:0;">' + (p >= 0 ? "▲ +" : "▼ ") + p + "%</span>";
+  }
+
+  function blRenderKpis(d) {
+    var wk = d.weeks, cur = wk[wk.length - 1], prev = wk.length > 1 ? wk[wk.length - 2] : null;
+    var dp = prev ? blDelta(cur.budget, prev.budget) : null;
+    var dc = prev ? blDelta(cur.paidCount, prev.paidCount) : null;
+    var html =
+      '<div class="bl-kpi accent"><div class="v num">' + fmtMoney(cur.budget) + ' ₸</div><div class="c">Бюджет текущей недели (' + blWeekLabel(cur) + ')</div>' +
+      '<div class="d">' + (dp == null ? "нет данных за прошлую неделю" : (dp >= 0 ? "▲ +" : "▼ ") + dp + "% к прошлой неделе") + '</div></div>' +
+      '<div class="bl-kpi"><div class="v num">' + cur.paidCount + '</div><div class="c">Платных блогеров на этой неделе</div>' +
+      '<div class="d ' + (dc == null ? "" : dc >= 0 ? "up" : "down") + '">' + (dc == null ? "" : (dc >= 0 ? "▲ +" : "▼ ") + dc + "% к прошлой") + '</div></div>' +
+      '<div class="bl-kpi"><div class="v num">' + fmtMoney(d.totals.budget) + ' ₸</div><div class="c">Бюджет за период (' + d.totals.weeks + ' нед.)</div>' +
+      '<div class="d">' + d.totals.paidCount + ' платных · ' + d.totals.barterCount + ' бартер</div></div>' +
+      '<div class="bl-kpi"><div class="v num">' + fmtMoney(d.totals.avg) + ' ₸</div><div class="c">Средняя цена размещения</div>' +
+      '<div class="d">ждём выхода: ' + d.totals.waitingCount + '</div></div>';
+    document.getElementById("blKpis").innerHTML = html;
+  }
+
+  function blRenderChart(d) {
+    var svg = document.getElementById("blChart");
+    if (!svg) return;
+    var wk = d.weeks;
+    var W = svg.clientWidth || 900, H = 300, left = 56, right = 40, top = 22, bottom = 34;
+    var iw = W - left - right, ih = H - top - bottom, n = wk.length;
+    var step = iw / n, barW = Math.max(6, Math.min(48, step * 0.6));
+    var maxB = Math.max(1, Math.max.apply(null, wk.map(function (w) { return w.budget; })));
+    var maxC = Math.max(1, Math.max.apply(null, wk.map(function (w) { return w.paidCount; })));
+    function niceMax(v) { var p = Math.pow(10, Math.floor(Math.log10(v))); var m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+    var yMax = niceMax(maxB), cMax = Math.max(4, Math.ceil(maxC * 1.15));
+    var parts = [];
+    for (var g = 0; g <= 4; g++) {
+      var y = top + ih - (ih * g) / 4;
+      parts.push('<line x1="' + left + '" x2="' + (W - right) + '" y1="' + y + '" y2="' + y + '" stroke="var(--line)" stroke-width="1"></line>');
+      parts.push('<text x="' + (left - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="10.5" fill="var(--muted)">' + (yMax * g / 4 >= 1000 ? Math.round(yMax * g / 4 / 1000) + " тыс" : Math.round(yMax * g / 4)) + '</text>');
+      parts.push('<text x="' + (W - right + 8) + '" y="' + (y + 4) + '" font-size="10.5" fill="var(--accent-text)">' + Math.round(cMax * g / 4) + '</text>');
+    }
+    var pts = [];
+    var every = Math.ceil(46 / step);
+    wk.forEach(function (w, i) {
+      var cx = left + i * step + step / 2;
+      var bh = (w.budget / yMax) * ih;
+      parts.push('<rect x="' + (cx - barW / 2) + '" y="' + (top + ih - bh) + '" width="' + barW + '" height="' + Math.max(bh, w.budget ? 2 : 0) + '" rx="5" fill="var(--petal)" opacity="' + (i === n - 1 ? 1 : .85) + '"><title>' + blWeekLabel(w) + ": " + fmtMoney(w.budget) + ' ₸, платных: ' + w.paidCount + '</title></rect>');
+      pts.push([cx, top + ih - (w.paidCount / cMax) * ih]);
+      if (i % every === 0 || i === n - 1) {
+        parts.push('<text x="' + cx + '" y="' + (H - 12) + '" text-anchor="middle" font-size="10.5" fill="var(--muted)">' + blDay(w.start) + " " + blMon(w.start) + '</text>');
+      }
+    });
+    parts.push('<polyline points="' + pts.map(function (p) { return p[0] + "," + p[1]; }).join(" ") + '" fill="none" stroke="var(--raspberry)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>');
+    pts.forEach(function (p, i) {
+      parts.push('<circle cx="' + p[0] + '" cy="' + p[1] + '" r="4" fill="var(--surface)" stroke="var(--raspberry)" stroke-width="2.5"></circle>');
+      if (n <= 20 && wk[i].paidCount > 0) parts.push('<text x="' + p[0] + '" y="' + (p[1] - 9) + '" text-anchor="middle" font-size="11" font-weight="700" fill="var(--accent-text)">' + wk[i].paidCount + '</text>');
+    });
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    svg.innerHTML = parts.join("");
+  }
+
+  var KIND_RU = { published: "Опубликовал", waiting: "Ждём выхода", cancelled: "Отмена", other: "—" };
+
+  function blRenderTable(d) {
+    var tbody = document.querySelector("#blTable tbody");
+    if (!tbody) return;
+    var wk = d.weeks, rows = [];
+    for (var i = wk.length - 1; i >= 0; i--) {
+      var w = wk[i], prev = i > 0 ? wk[i - 1] : null;
+      var dp = prev ? blDelta(w.budget, prev.budget) : null;
+      rows.push('<tr class="wk' + (i === wk.length - 1 ? " cur" : "") + '" data-i="' + i + '"><td>' + blWeekLabel(w) + (i === wk.length - 1 ? " (сейчас)" : "") + '</td>' +
+        '<td class="r">' + w.paidCount + '</td><td class="r">' + w.barterCount + '</td><td class="r">' + w.cancelledCount + '</td>' +
+        '<td class="r">' + fmtMoney(w.budget) + '</td><td class="r">' + fmtMoney(w.avg) + '</td><td class="r">' + blDeltaHtml(dp) + '</td></tr>');
+      var inner = w.bloggers.length ? '<table><thead><tr><th>Дата</th><th>Блогер</th><th>Город</th><th class="r">Подписчики</th><th>Товар</th><th class="r">Цена, ₸</th><th>Статус</th></tr></thead><tbody>' +
+        w.bloggers.map(function (b) {
+          return "<tr><td>" + blShortDate(b.date) + "</td><td>" + esc(b.nick) + (b.fullName ? ' <span style="color:var(--muted)">· ' + esc(b.fullName) + "</span>" : "") + "</td><td>" + esc(b.city) + '</td><td class="r">' + fmtMoney(b.followers) + "</td><td>" + esc(b.product) + '</td><td class="r">' + (b.barter ? "бартер" : fmtMoney(b.price)) + '</td><td><span class="bl-badge ' + b.kind + '">' + esc(b.status || KIND_RU[b.kind]) + "</span></td></tr>";
+        }).join("") + "</tbody></table>" : '<div class="mgr-msg">В эту неделю договорённостей нет.</div>';
+      rows.push('<tr class="detail hidden" data-d="' + i + '"><td colspan="7"><div class="bl-detail">' + inner + "</div></td></tr>");
+    }
+    tbody.innerHTML = rows.join("");
+    $all("#blTable tr.wk").forEach(function (tr) {
+      tr.addEventListener("click", function () {
+        var det = document.querySelector('#blTable tr.detail[data-d="' + tr.getAttribute("data-i") + '"]');
+        if (!det) return;
+        det.classList.toggle("hidden");
+        tr.classList.toggle("open", !det.classList.contains("hidden"));
+      });
+    });
+  }
+
+  function blShowMsg(text) {
+    var m = document.getElementById("blMsg");
+    if (!m) return;
+    m.textContent = text || "";
+    m.classList.toggle("hidden", !text);
+  }
+
+  function loadBloggers(refresh) {
+    blShowMsg("Загружаю…");
+    fetch("/api/bloggers/report?weeks=" + blWeeks + (refresh ? "&refresh=1" : "")).then(function (r) { return r.json(); }).then(function (d) {
+      var setup = document.getElementById("blSetup"), main = document.getElementById("blMain");
+      if (!d.configured) { setup.classList.remove("hidden"); main.classList.add("hidden"); return; }
+      setup.classList.add("hidden"); main.classList.remove("hidden");
+      if (!d.ok) { blShowMsg("Не удалось прочитать таблицу: " + (d.error || "ошибка")); return; }
+      blData = d;
+      blShowMsg(d.stale ? "Показаны сохранённые данные (таблица сейчас недоступна: " + d.stale + ")" : "");
+      blRenderKpis(d);
+      blRenderChart(d);
+      blRenderTable(d);
+    }).catch(function () { blShowMsg("Ошибка соединения с сервером."); });
+  }
+
+  function initBloggersTab() {
+    var tabBtn = document.querySelector('.tab[data-tab="bloggers"]');
+    if (tabBtn) {
+      tabBtn.addEventListener("click", function () {
+        if (!blLoaded) { blLoaded = true; loadBloggers(false); }
+        else if (blData) setTimeout(function () { blRenderChart(blData); }, 0);
+      });
+    }
+    $all("[data-blweeks]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        $all("[data-blweeks]").forEach(function (x) { x.classList.remove("active"); });
+        b.classList.add("active");
+        blWeeks = parseInt(b.getAttribute("data-blweeks"), 10) || 12;
+        loadBloggers(false);
+      });
+    });
+    var rb = document.getElementById("blRefreshBtn");
+    if (rb) rb.addEventListener("click", function () { loadBloggers(true); });
+    window.addEventListener("resize", function () { if (blData && !document.getElementById("tab-bloggers").classList.contains("hidden")) blRenderChart(blData); });
+  }
+
+  /* ---------------- тема (светлая / тёмная) ---------------- */
+  function initTheme() {
+    var btn = document.getElementById("themeBtn");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+      var next = cur === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+      if (blData && !document.getElementById("tab-bloggers").classList.contains("hidden")) blRenderChart(blData);
+    });
+  }
+
 
   /* ---------------- инициализация ---------------- */
   function init() {
@@ -1025,8 +1076,9 @@
     initManagersTab();
     initEmployeesTab();
     initKaspiTest();
-    initKaspiSession();
-    initKaspiOrdersTab();
+    initKaspiRun();
+    initBloggersTab();
+    initTheme();
 
     fetch("/api/me").then(function (r) { return r.json(); }).then(function (me) {
       if (!me.authed) { window.location.href = "/login.html"; return; }
