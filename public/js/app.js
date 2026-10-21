@@ -934,9 +934,9 @@
       '<div class="bl-kpi"><div class="v num">' + cur.count + '</div><div class="c">Блогеров на этой неделе</div>' +
       '<div class="d ' + (dc == null ? "" : dc >= 0 ? "up" : "down") + '">' + (dc == null ? "" : (dc >= 0 ? "▲ +" : "▼ ") + dc + "% к прошлой") + '</div></div>' +
       '<div class="bl-kpi"><div class="v num">' + fmtMoney(d.totals.budget) + ' ₸</div><div class="c">Бюджет за период (' + d.totals.weeks + ' нед.)</div>' +
-      '<div class="d">гели ' + fmtMoney(d.totals.gelBudget) + ' · спреи ' + fmtMoney(d.totals.sprayBudget) + '</div></div>' +
+      '<div class="d">всего блогеров: ' + d.totals.count + '</div></div>' +
       '<div class="bl-kpi"><div class="v num">' + fmtMoney(d.totals.avg) + ' ₸</div><div class="c">Средний бюджет на блогера</div>' +
-      '<div class="d">всего блогеров ' + d.totals.count + ' · гели ' + d.totals.gelCount + ' · спреи ' + d.totals.sprayCount + '</div></div>';
+      '<div class="d">гели ' + d.totals.gelCount + ' · спреи ' + d.totals.sprayCount + ' · гели и спреи ' + d.totals.bothCount + '</div></div>';
     document.getElementById("blKpis").innerHTML = html;
   }
 
@@ -951,7 +951,7 @@
     var maxC = Math.max(1, Math.max.apply(null, wk.map(function (w) { return w.count; })));
     function niceMax(v) { var p = Math.pow(10, Math.floor(Math.log10(v))); var m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
     var yMax = niceMax(maxB), cMax = Math.max(4, Math.ceil(maxC * 1.15));
-    var parts = [];
+    var parts = ['<rect id="blBand" x="0" y="' + top + '" width="' + step + '" height="' + ih + '" rx="8" fill="var(--pink-soft)" opacity=".8" style="display:none"></rect>'];
     for (var g = 0; g <= 4; g++) {
       var y = top + ih - (ih * g) / 4;
       parts.push('<line x1="' + left + '" x2="' + (W - right) + '" y1="' + y + '" y2="' + y + '" stroke="var(--line)" stroke-width="1"></line>');
@@ -963,7 +963,7 @@
     wk.forEach(function (w, i) {
       var cx = left + i * step + step / 2;
       var bh = (w.budget / yMax) * ih;
-      parts.push('<rect x="' + (cx - barW / 2) + '" y="' + (top + ih - bh) + '" width="' + barW + '" height="' + Math.max(bh, w.budget ? 2 : 0) + '" rx="5" fill="var(--petal)" opacity="' + (i === n - 1 ? 1 : .85) + '"><title>' + blWeekLabel(w) + ": " + fmtMoney(w.budget) + ' ₸, блогеров: ' + w.count + '</title></rect>');
+      parts.push('<rect x="' + (cx - barW / 2) + '" y="' + (top + ih - bh) + '" width="' + barW + '" height="' + Math.max(bh, w.budget ? 2 : 0) + '" rx="5" fill="var(--petal)" opacity="' + (i === n - 1 ? 1 : .85) + '"></rect>');
       pts.push([cx, top + ih - (w.count / cMax) * ih]);
       if (i % every === 0 || i === n - 1) {
         parts.push('<text x="' + cx + '" y="' + (H - 12) + '" text-anchor="middle" font-size="10.5" fill="var(--muted)">' + blDay(w.start) + " " + blMon(w.start) + '</text>');
@@ -977,6 +977,32 @@
     svg.setAttribute("viewBox", "0 0 " + W + " " + H);
     svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
     svg.innerHTML = parts.join("");
+
+    // подсказка при наведении на неделю
+    var tip = document.getElementById("blTip"), band = svg.querySelector("#blBand");
+    function hide() { if (tip) tip.classList.add("hidden"); if (band) band.style.display = "none"; }
+    svg.onmouseleave = hide;
+    svg.onmousemove = function (e) {
+      if (!tip) return;
+      var r = svg.getBoundingClientRect();
+      var x = e.clientX - r.left;
+      var i = Math.floor((x - left) / step);
+      if (i < 0 || i >= n) { hide(); return; }
+      var w = wk[i];
+      band.setAttribute("x", left + i * step);
+      band.style.display = "";
+      tip.innerHTML = '<div class="t">' + blWeekLabel(w) + '</div>' +
+        '<div class="row"><span>Итого блогеров</span><b>' + w.count + '</b></div>' +
+        '<div class="row"><span>Только гели</span><b>' + w.gelCount + '</b></div>' +
+        '<div class="row"><span>Только спреи</span><b>' + w.sprayCount + '</b></div>' +
+        '<div class="row"><span>Гели и спреи</span><b>' + w.bothCount + '</b></div>' +
+        '<div class="row total"><span>Бюджет</span><b>' + fmtMoney(w.budget) + ' ₸</b></div>';
+      tip.classList.remove("hidden");
+      var tw = tip.offsetWidth, px = x + 16;
+      if (px + tw > r.width) px = x - tw - 16;
+      tip.style.left = Math.max(0, px) + "px";
+      tip.style.top = "24px";
+    };
   }
 
   var KIND_RU = { published: "Опубликовал", waiting: "Ждём выхода", cancelled: "Отмена", other: "—" };
@@ -989,13 +1015,13 @@
       var w = wk[i], prev = i > 0 ? wk[i - 1] : null;
       var dp = prev ? blDelta(w.budget, prev.budget) : null;
       rows.push('<tr class="wk' + (i === wk.length - 1 ? " cur" : "") + '" data-i="' + i + '"><td>' + blWeekLabel(w) + (i === wk.length - 1 ? " (сейчас)" : "") + '</td>' +
-        '<td class="r"><b>' + w.count + '</b></td><td class="r">' + w.gelCount + '</td><td class="r">' + w.sprayCount + '</td>' +
-        '<td class="r"><b>' + fmtMoney(w.budget) + '</b></td><td class="r">' + fmtMoney(w.gelBudget) + '</td><td class="r">' + fmtMoney(w.sprayBudget) + '</td><td class="r">' + blDeltaHtml(dp) + '</td></tr>');
+        '<td class="r"><b>' + w.count + '</b></td><td class="r">' + w.gelCount + '</td><td class="r">' + w.sprayCount + '</td><td class="r">' + w.bothCount + '</td>' +
+        '<td class="r"><b>' + fmtMoney(w.budget) + '</b></td></tr>');
       var inner = w.bloggers.length ? '<table><thead><tr><th>Дата</th><th>Блогер</th><th>Город</th><th class="r">Подписчики</th><th>Товар</th><th class="r">Размещение, ₸</th><th class="r">Себес, ₸</th><th class="r">Бюджет, ₸</th><th>Статус</th></tr></thead><tbody>' +
         w.bloggers.map(function (b) {
           return "<tr><td>" + blShortDate(b.date) + "</td><td>" + esc(b.nick) + (b.fullName ? ' <span style="color:var(--muted)">· ' + esc(b.fullName) + "</span>" : "") + "</td><td>" + esc(b.city) + '</td><td class="r">' + fmtMoney(b.followers) + "</td><td>" + esc(b.product) + '</td><td class="r">' + (b.barter ? "бартер" : fmtMoney(b.price)) + '</td><td class="r">' + fmtMoney(b.cost) + '</td><td class="r">' + fmtMoney(b.total) + '</td><td><span class="bl-badge ' + b.kind + '">' + esc(b.status || KIND_RU[b.kind]) + "</span></td></tr>";
         }).join("") + "</tbody></table>" : '<div class="mgr-msg">В эту неделю договорённостей нет.</div>';
-      rows.push('<tr class="detail hidden" data-d="' + i + '"><td colspan="8"><div class="bl-detail">' + inner + "</div></td></tr>");
+      rows.push('<tr class="detail hidden" data-d="' + i + '"><td colspan="6"><div class="bl-detail">' + inner + "</div></td></tr>");
     }
     tbody.innerHTML = rows.join("");
     $all("#blTable tr.wk").forEach(function (tr) {
@@ -1030,6 +1056,7 @@
         blShowMsg("Распознано строк: " + d.diag.parsedRows + ", но за выбранный период договорённостей нет — выберите «Всё».");
       }
       if (d.stale) blShowMsg("Показаны сохранённые данные (таблица сейчас недоступна: " + d.stale + ")");
+      else if (d.totals.otherCount > 0) blShowMsg("Внимание: " + d.totals.otherCount + " блогеров без распознанного товара (не гель и не спрей) не вошли в «Итого», но их расходы есть в бюджете. Проверьте колонку «какой продукт».");
       else if (tot || !d.diag) blShowMsg("");
       blRenderKpis(d);
       blRenderChart(d);
