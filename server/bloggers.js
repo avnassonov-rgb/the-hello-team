@@ -153,7 +153,7 @@ function buildReport(rows, weeksCount) {
   for (let t = firstMon.getTime(); t <= todayMon.getTime(); t += 7 * 86400000) {
     const s = new Date(t), e = new Date(t + 6 * 86400000);
     const w = { start: isoOf(s), end: isoOf(e), paidCount: 0, barterCount: 0, cancelledCount: 0, waitingCount: 0, publishedCount: 0, placement: 0, costSum: 0, budget: 0, avg: 0, bloggers: [],
-      count: 0, gelCount: 0, sprayCount: 0, otherCount: 0, gelBudget: 0, sprayBudget: 0, otherBudget: 0 };
+      count: 0, gelCount: 0, sprayCount: 0, bothCount: 0, otherCount: 0 };
     weeks.push(w);
     byKey[w.start] = w;
   }
@@ -166,11 +166,12 @@ function buildReport(rows, weeksCount) {
       if (r.barter) w.barterCount++; else w.paidCount++;
       const total = r.price + r.cost;
       w.placement += r.price; w.costSum += r.cost; w.budget += total;
-      w.count++;
-      // блогер с двумя категориями считается в обеих; бюджет делится поровну (сумма сходится)
-      if (cats.gel) { w.gelCount++; w.gelBudget += cats.spray ? total / 2 : total; }
-      if (cats.spray) { w.sprayCount++; w.sprayBudget += cats.gel ? total / 2 : total; }
-      if (!cats.gel && !cats.spray) { w.otherCount++; w.otherBudget += total; }
+      // каждый блогер попадает ровно в одну группу: только гель / только спрей / и то и другое
+      // (итого = гели + спреи + оба); блогер без распознанного товара считается отдельно
+      if (cats.gel && cats.spray) { w.bothCount++; w.count++; }
+      else if (cats.gel) { w.gelCount++; w.count++; }
+      else if (cats.spray) { w.sprayCount++; w.count++; }
+      else w.otherCount++;
     }
     if (r.kind !== "cancelled") {
       if (r.kind === "waiting") w.waitingCount++;
@@ -183,12 +184,11 @@ function buildReport(rows, weeksCount) {
     });
   }
   const totals = { paidCount: 0, barterCount: 0, cancelledCount: 0, waitingCount: 0, placement: 0, costSum: 0, budget: 0, avg: 0, weeks: weeks.length,
-    count: 0, gelCount: 0, sprayCount: 0, otherCount: 0, gelBudget: 0, sprayBudget: 0, otherBudget: 0 };
+    count: 0, gelCount: 0, sprayCount: 0, bothCount: 0, otherCount: 0 };
   weeks.forEach((w) => {
     const cnt = w.paidCount + w.barterCount;
     w.avg = cnt ? Math.round(w.budget / cnt) : 0;
-    ["gelBudget", "sprayBudget", "otherBudget"].forEach((k) => { w[k] = Math.round(w[k]); totals[k] += w[k]; });
-    ["count", "gelCount", "sprayCount", "otherCount"].forEach((k) => { totals[k] += w[k]; });
+    ["count", "gelCount", "sprayCount", "bothCount", "otherCount"].forEach((k) => { totals[k] += w[k]; });
     w.bloggers.sort((a, b) => (a.date < b.date ? -1 : 1));
     totals.paidCount += w.paidCount; totals.barterCount += w.barterCount;
     totals.cancelledCount += w.cancelledCount; totals.waitingCount += w.waitingCount;
