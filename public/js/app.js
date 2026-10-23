@@ -1085,6 +1085,197 @@
     window.addEventListener("resize", function () { if (blData && !document.getElementById("tab-bloggers").classList.contains("hidden")) blRenderChart(blData); });
   }
 
+  /* ---------------- Главная: продажи по месяцам из 1С ---------------- */
+  var SALES_CATS = [
+    { key: "kaspi", name: "Каспи Магазин", color: "var(--raspberry)" },
+    { key: "gos", name: "Гос закуп", color: "var(--petal)" },
+    { key: "office", name: "Офис-менеджер", color: "var(--cherry)" },
+    { key: "other", name: "Другие", color: "var(--bar-gray)" }
+  ];
+  var MONTHS_FULL = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+  var MONTHS_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  var salesNow = new Date(Date.now() + 5 * 3600 * 1000); // время Костаная
+  var salesCurYear = salesNow.getUTCFullYear();
+  var salesYear = salesCurYear;
+  var salesFilter = "all";
+  var salesRes = null;
+  var salesPollTimer = null;
+
+  function salesVal(M, key) { return key === "all" ? M.total : M[key]; }
+  function salesCnt(M, key) { return key === "all" ? M.count : M[key + "Count"]; }
+  function fmtShortMoney(v) {
+    if (v >= 1e6) return (Math.round(v / 1e5) / 10).toString().replace(".", ",") + " млн";
+    if (v >= 1e3) return Math.round(v / 1e3) + " тыс";
+    return String(Math.round(v));
+  }
+
+  function salesMsg(text) {
+    var m = document.getElementById("salesMsg");
+    if (!m) return;
+    m.textContent = text || "";
+    m.classList.toggle("hidden", !text);
+  }
+
+  // прогноз на месяц: линейно по календарным дням (только для текущего месяца текущего года)
+  function salesForecast(value) {
+    var day = salesNow.getUTCDate();
+    var dim = new Date(Date.UTC(salesCurYear, salesNow.getUTCMonth() + 1, 0)).getUTCDate();
+    return Math.round((value / day) * dim);
+  }
+
+  function renderSales() {
+    var d = salesRes && salesRes.data;
+    var kpis = document.getElementById("salesKpis"), svg = document.getElementById("salesChart");
+    if (!d || !kpis || !svg) return;
+    var f = salesFilter, months = d.months;
+    var isCur = d.year === salesCurYear, curIdx = salesNow.getUTCMonth();
+
+    var yearTotal = 0, yearCount = 0, best = 0, bestIdx = -1;
+    months.forEach(function (M, i) {
+      var v = salesVal(M, f);
+      yearTotal += v; yearCount += salesCnt(M, f);
+      if (v > best) { best = v; bestIdx = i; }
+    });
+
+    var html = '<div class="bl-kpi accent"><div class="v num">' + fmtMoney(yearTotal) + ' ₸</div><div class="c">Продажи за ' + d.year + ' год</div><div class="d">реализаций: ' + yearCount + '</div></div>';
+    if (isCur) {
+      var cv = salesVal(months[curIdx], f), pv = curIdx > 0 ? salesVal(months[curIdx - 1], f) : 0;
+      var fc = salesForecast(cv);
+      var dp = pv ? Math.round(((fc - pv) / pv) * 100) : null;
+      html += '<div class="bl-kpi"><div class="v num">' + fmtMoney(cv) + ' ₸</div><div class="c">' + MONTHS_FULL[curIdx] + ' — на сегодня</div><div class="d">реализаций: ' + salesCnt(months[curIdx], f) + '</div></div>' +
+        '<div class="bl-kpi"><div class="v num">' + fmtMoney(fc) + ' ₸</div><div class="c">Прогноз на ' + MONTHS_FULL[curIdx].toLowerCase() + '</div><div class="d ' + (dp == null ? "" : dp >= 0 ? "up" : "down") + '">' + (dp == null ? "линейно по дням месяца" : (dp >= 0 ? "▲ +" : "▼ ") + dp + "% к прошлому месяцу") + '</div></div>';
+    } else {
+      html += '<div class="bl-kpi"><div class="v num">' + (bestIdx >= 0 ? MONTHS_FULL[bestIdx] : "—") + '</div><div class="c">Лучший месяц</div><div class="d">' + fmtMoney(best) + ' ₸</div></div>' +
+        '<div class="bl-kpi"><div class="v num">' + fmtMoney(yearCount ? Math.round(yearTotal / yearCount) : 0) + ' ₸</div><div class="c">Средняя реализация</div></div>';
+    }
+    html += '<div class="bl-kpi"><div class="v num">' + fmtMoney(Math.round(yearTotal / (isCur ? curIdx + 1 : 12))) + ' ₸</div><div class="c">В среднем за месяц</div></div>';
+    kpis.innerHTML = html;
+
+    // легенда
+    var leg = document.getElementById("salesLegend");
+    if (leg) {
+      leg.innerHTML = (f === "all" ? SALES_CATS : SALES_CATS.filter(function (c) { return c.key === f; })).map(function (c) {
+        return '<span><i class="bl-dot" style="background:' + c.color + '"></i> ' + c.name + '</span>';
+      }).join("") + (isCur ? '<span><i class="bl-dot" style="border:2px dashed var(--raspberry);background:transparent"></i> прогноз месяца</span>' : "");
+    }
+
+    // график
+    var W = svg.clientWidth || 900, H = 300, left = 56, right = 14, top = 22, bottom = 30;
+    var iw = W - left - right, ih = H - top - bottom, n = 12, step = iw / n;
+    var barW = Math.max(10, Math.min(56, step * 0.62));
+    var maxV = 1;
+    months.forEach(function (M, i) {
+      var v = salesVal(M, f);
+      if (isCur && i === curIdx) v = Math.max(v, salesForecast(v));
+      if (v > maxV) maxV = v;
+    });
+    function niceMax(v) { var p = Math.pow(10, Math.floor(Math.log10(v))); var m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+    var yMax = niceMax(maxV);
+    var parts = ['<rect id="salesBand" x="0" y="' + top + '" width="' + step + '" height="' + ih + '" rx="8" fill="var(--pink-soft)" opacity=".8" style="display:none"></rect>'];
+    for (var g = 0; g <= 4; g++) {
+      var y = top + ih - (ih * g) / 4;
+      parts.push('<line x1="' + left + '" x2="' + (W - right) + '" y1="' + y + '" y2="' + y + '" stroke="var(--line)" stroke-width="1"></line>');
+      parts.push('<text x="' + (left - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="10.5" fill="var(--muted)">' + fmtShortMoney(yMax * g / 4) + '</text>');
+    }
+    months.forEach(function (M, i) {
+      var cx = left + i * step + step / 2, x = cx - barW / 2;
+      var future = isCur && i > curIdx;
+      if (!future) {
+        var yy = top + ih;
+        var segs = f === "all" ? SALES_CATS : SALES_CATS.filter(function (c) { return c.key === f; });
+        segs.forEach(function (c) {
+          var v = M[c.key]; if (!v) return;
+          var h = (v / yMax) * ih; yy -= h;
+          parts.push('<rect x="' + x + '" y="' + yy + '" width="' + barW + '" height="' + Math.max(h, 1) + '" fill="' + c.color + '"></rect>');
+        });
+        if (isCur && i === curIdx) {
+          var cvv = salesVal(M, f), fcv = salesForecast(cvv);
+          if (fcv > cvv) {
+            var fy = top + ih - (fcv / yMax) * ih, base = top + ih - (cvv / yMax) * ih;
+            parts.push('<rect x="' + x + '" y="' + fy + '" width="' + barW + '" height="' + (base - fy) + '" fill="none" stroke="var(--raspberry)" stroke-width="1.5" stroke-dasharray="4 3"></rect>');
+          }
+        }
+      }
+      parts.push('<text x="' + cx + '" y="' + (H - 9) + '" text-anchor="middle" font-size="10.5" fill="' + (isCur && i === curIdx ? "var(--accent-text)" : "var(--muted)") + '" font-weight="' + (isCur && i === curIdx ? 700 : 400) + '">' + MONTHS_SHORT[i] + '</text>');
+    });
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    svg.innerHTML = parts.join("");
+
+    var tip = document.getElementById("salesTip"), band = svg.querySelector("#salesBand");
+    function hide() { if (tip) tip.classList.add("hidden"); if (band) band.style.display = "none"; }
+    svg.onmouseleave = hide;
+    svg.onmousemove = function (e) {
+      if (!tip) return;
+      var r = svg.getBoundingClientRect(), x = e.clientX - r.left;
+      var i = Math.floor((x - left) / step);
+      if (i < 0 || i >= n || (isCur && i > curIdx)) { hide(); return; }
+      var M = months[i];
+      band.setAttribute("x", left + i * step); band.style.display = "";
+      var rows = SALES_CATS.map(function (c) {
+        if (f !== "all" && c.key !== f) return "";
+        if (f === "all" && !M[c.key] && c.key === "other") return "";
+        return '<div class="row"><span><i class="bl-dot" style="background:' + c.color + '"></i>' + c.name + ' (' + M[c.key + "Count"] + ')</span><b>' + fmtMoney(M[c.key]) + ' ₸</b></div>';
+      }).join("");
+      var tv = salesVal(M, f);
+      tip.innerHTML = '<div class="t">' + MONTHS_FULL[i] + ' ' + d.year + '</div>' + rows +
+        '<div class="row total"><span>Итого (' + salesCnt(M, f) + ' реализ.)</span><b>' + fmtMoney(tv) + ' ₸</b></div>' +
+        (isCur && i === curIdx ? '<div class="row"><span>Прогноз месяца</span><b>' + fmtMoney(salesForecast(tv)) + ' ₸</b></div>' : "");
+      tip.classList.remove("hidden");
+      var tw = tip.offsetWidth, px = x + 16;
+      if (px + tw > r.width) px = x - tw - 16;
+      tip.style.left = Math.max(0, px) + "px"; tip.style.top = "24px";
+    };
+  }
+
+  function loadSales(refresh) {
+    if (salesPollTimer) { clearTimeout(salesPollTimer); salesPollTimer = null; }
+    fetch("/api/sales/monthly?year=" + salesYear + (refresh ? "&refresh=1" : "")).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.ok) { salesMsg("Не удалось получить данные по продажам."); return; }
+      if (res.data) salesRes = res;
+      if (res.data) {
+        renderSales();
+        var dg = res.data.diag || {};
+        if (res.error) salesMsg("Показаны сохранённые данные (1С сейчас не ответила: " + res.error + ")");
+        else if (dg.used === 0) salesMsg("Из 1С пришло документов: " + (dg.rows || 0) + ", но суммы не распознаны. Проверьте поле «СуммаДокумента» в реализациях." + (dg.respError ? " Ответственные: " + dg.respError : ""));
+        else if (dg.respFound === 0 || dg.respError) salesMsg("Не удалось расшифровать «Ответственного» — разбивка по категориям может быть неточной. " + (dg.respError || ""));
+        else salesMsg(res.loading ? "Обновляю из 1С…" : "");
+      } else if (res.error) {
+        salesMsg("Ошибка загрузки из 1С: " + res.error);
+      } else {
+        salesMsg("Загружаю данные из 1С — это может занять до минуты…");
+      }
+      if (res.loading) salesPollTimer = setTimeout(function () { loadSales(false); }, 6000);
+    }).catch(function () { salesMsg("Ошибка соединения с сервером."); });
+  }
+
+  function initSales() {
+    var prev = document.getElementById("salesYearPrev"), cur = document.getElementById("salesYearCur");
+    if (!prev || !cur) return;
+    prev.textContent = String(salesCurYear - 1);
+    cur.textContent = String(salesCurYear);
+    function setYear(y) {
+      salesYear = y; salesRes = null;
+      prev.classList.toggle("active", y === salesCurYear - 1);
+      cur.classList.toggle("active", y === salesCurYear);
+      document.getElementById("salesKpis").innerHTML = "";
+      loadSales(false);
+    }
+    prev.addEventListener("click", function () { setYear(salesCurYear - 1); });
+    cur.addEventListener("click", function () { setYear(salesCurYear); });
+    $all("#salesFilters [data-sf]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        $all("#salesFilters [data-sf]").forEach(function (x) { x.classList.remove("active"); });
+        b.classList.add("active");
+        salesFilter = b.getAttribute("data-sf");
+        renderSales();
+      });
+    });
+    var rb = document.getElementById("salesRefreshBtn");
+    if (rb) rb.addEventListener("click", function () { loadSales(true); });
+    window.addEventListener("resize", function () { if (salesRes) renderSales(); });
+  }
+
   /* ---------------- тема (светлая / тёмная) ---------------- */
   function initTheme() {
     var btn = document.getElementById("themeBtn");
@@ -1112,6 +1303,7 @@
     initKaspiTest();
     initKaspiRun();
     initBloggersTab();
+    initSales();
     initTheme();
 
     fetch("/api/me").then(function (r) { return r.json(); }).then(function (me) {
@@ -1125,6 +1317,7 @@
         renderSettingsForm();
         renderControlEditor();
         recomputeAndRender();
+        loadSales(false);
       });
     });
   }
