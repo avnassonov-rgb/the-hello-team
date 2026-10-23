@@ -15,6 +15,7 @@ const kaspi = require("./kaspi");
 const telegram = require("./telegram");
 const kaspiTransfer = require("./kaspiTransfer");
 const bloggers = require("./bloggers");
+const salesStats = require("./salesStats");
 
 const INSTALL_HTML = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
   "<title>THE HELLO — установка приложения</title></head>" +
@@ -296,6 +297,15 @@ const server = http.createServer((req, res) => {
     if (pathname === "/api/kaspi-transfer/status" && req.method === "GET") {
       return sendJSON(res, 200, { ok: true, state: store.getKaspiTransferState() });
     }
+    if (pathname === "/api/sales/monthly" && req.method === "GET") {
+      // Продажи по месяцам из 1С (реализации: проведённые и нет, без удалённых).
+      const q = parsed.query || {};
+      const nowYear = new Date(Date.now() + 5 * 3600 * 1000).getUTCFullYear();
+      const year = Math.min(Math.max(parseInt(q.year, 10) || nowYear, 2020), nowYear);
+      const r = salesStats.getMonthly(year, q.refresh === "1");
+      return sendJSON(res, 200, Object.assign({ ok: true, year }, r));
+    }
+
     if (pathname === "/api/bloggers/report" && req.method === "GET") {
       // Отчёт по блогерам по неделям (лист «$$$» из Google Таблицы).
       const q = parsed.query || {};

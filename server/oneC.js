@@ -925,6 +925,8 @@ async function createRealizationDocument(opts) {
 }
 
 module.exports = {
+  fetchEntitySet,
+  fetchRefCatalogMap,
   refresh,
   refreshSafe,
   fetchMetadataFragment,
