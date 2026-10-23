@@ -407,8 +407,8 @@ const server = http.createServer((req, res) => {
 
   // ---- страницы / статика ----
   if (pathname === "/" ) {
-    if (!auth.isAuthed(req)) return send(res, 302, "", { Location: "/login.html" });
-    return send(res, 302, "", { Location: "/app.html" });
+    // Главная — публичный сайт-визитка. Дашборд открывается по кнопке «Корпоративный портал» (/app.html → вход по паролю).
+    return serveStatic(req, res, "/site/index.html");
   }
   if (pathname === "/app.html" && !auth.isAuthed(req)) {
     return send(res, 302, "", { Location: "/login.html" });
