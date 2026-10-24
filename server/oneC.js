@@ -199,6 +199,12 @@ async function fetchRefCatalogMap(candidateEntityNames, selectFields) {
   };
 }
 
+/* Строки табличной части «Товары» одного документа (любого вида). */
+async function fetchDocumentLines(entityName, refKey) {
+  const url = baseUrl() + entityName + "(guid'" + refKey + "')/Товары?" + buildQuery({ "$format": "json" });
+  return extractArray(await httpGetJSON(url, 30000));
+}
+
 /* Товарные позиции одного счёта — табличная часть документа недоступна через
    $expand на этом сервере (это коллекция), поэтому обращаемся к ней напрямую по
    адресу вида Document_СчетНаОплатуПокупателю(guid'...')/Товары — это стандартный
@@ -926,6 +932,7 @@ async function createRealizationDocument(opts) {
 
 module.exports = {
   fetchEntitySet,
+  fetchDocumentLines,
   fetchRefCatalogMap,
   refresh,
   refreshSafe,

@@ -16,6 +16,7 @@ const telegram = require("./telegram");
 const kaspiTransfer = require("./kaspiTransfer");
 const bloggers = require("./bloggers");
 const salesStats = require("./salesStats");
+const mcp = require("./mcp");
 
 const INSTALL_HTML = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
   "<title>THE HELLO — установка приложения</title></head>" +
@@ -110,6 +111,9 @@ const PUBLIC_PATHS = new Set(["/login.html", "/css/brand.css", "/js/engine.js", 
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
   const pathname = decodeURIComponent(parsed.pathname);
+
+  // ---- MCP-коннектор для Claude (по секретному адресу /mcp/<MCP_SECRET>) ----
+  if (pathname.indexOf("/mcp/") === 0 && mcp.handle(req, res, pathname)) return;
 
   // ---- API ----
   if (pathname === "/api/login" && req.method === "POST") {
