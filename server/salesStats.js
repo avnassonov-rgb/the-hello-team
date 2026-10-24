@@ -147,13 +147,23 @@ async function buildItems(year) {
     lines.push({ d: doc.d, c: doc.c, r: doc.r, n: nom.map.get(nk) || "(товар не найден)", q, s });
   };
   try {
-    const rows = await oneC.fetchEntitySet("Document_РеализацияТоваровУслуг_Товары", {
-      pageSize: 2000, timeoutMs: 120000, orderby: "Ref_Key,LineNumber",
-    });
-    rows.forEach((row) => {
-      const doc = byKey.get(String(row.Ref_Key || "").toLowerCase());
-      if (doc) push(doc, row);
-    });
+    const onRows = (chunk) => {
+      chunk.forEach((row) => {
+        const doc = byKey.get(String(row.Ref_Key || "").toLowerCase());
+        if (doc) push(doc, row);
+      });
+    };
+    try {
+      await oneC.fetchEntitySet("Document_РеализацияТоваровУслуг_Товары", {
+        select: "Ref_Key,LineNumber,Номенклатура_Key,Количество,Сумма",
+        pageSize: 1000, timeoutMs: 120000, orderby: "Ref_Key,LineNumber", maxPages: 1000, onRows,
+      });
+    } catch (e0) {
+      lines.length = 0;
+      await oneC.fetchEntitySet("Document_РеализацияТоваровУслуг_Товары", {
+        pageSize: 1000, timeoutMs: 120000, orderby: "Ref_Key,LineNumber", maxPages: 1000, onRows,
+      });
+    }
   } catch (e) {
     mode = "per-document";
     const list = docs.rows.filter((x) => x.k);

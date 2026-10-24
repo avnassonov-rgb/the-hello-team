@@ -127,7 +127,7 @@ function buildQuery(params) {
 async function fetchEntitySet(entityName, opts) {
   opts = opts || {};
   const pageSize = opts.pageSize || 300;
-  const guardMaxPages = 100; // защита от бесконечного цикла при неожиданном ответе сервера
+  const guardMaxPages = opts.maxPages || 100; // защита от бесконечного цикла при неожиданном ответе сервера
   let all = [];
   let skip = 0;
   for (let page = 0; page < guardMaxPages; page++) {
@@ -143,7 +143,7 @@ async function fetchEntitySet(entityName, opts) {
       throw new Error("[" + entityName + (opts.expand ? " $expand=" + opts.expand : "") + "] " + e.message);
     }
     const chunk = extractArray(json);
-    all = all.concat(chunk);
+    if (opts.onRows) opts.onRows(chunk); else all = all.concat(chunk);
     if (chunk.length < pageSize) break;
     skip += pageSize;
   }
