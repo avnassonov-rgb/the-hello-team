@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const store = require("./store");
 const salesStats = require("./salesStats");
 const bloggers = require("./bloggers");
+const invoices = require("./invoices");
 const Engine = require("../public/js/engine.js");
 
 const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
@@ -44,6 +45,20 @@ const TOOLS = [
     } },
   },
   {
+    name: "invoices_search",
+    description: "Счета на оплату покупателю из 1С (без удалённых): номер, дата, сумма, контрагент, ответственный, комментарий и статус отгрузки (отгружен = есть реализация на основании счёта; даётся дата и номер реализации). Фильтры: контрагент, ответственный, часть комментария, статус (all / shipped / not_shipped), даты. Можно получить список счетов (group_by=list) или сводку по месяцам, неделям, контрагентам, ответственным, статусу.",
+    inputSchema: { type: "object", properties: {
+      counterparty_contains: { type: "string", description: "Часть названия контрагента, например: солнечный" },
+      responsible_contains: { type: "string", description: "Часть имени ответственного: каспи, гос, офис" },
+      comment_contains: { type: "string", description: "Часть комментария к счёту" },
+      status: { type: "string", enum: ["all", "shipped", "not_shipped"], description: "По умолчанию all." },
+      date_from: { type: "string", description: "ГГГГ-ММ-ДД. По умолчанию 1 января текущего года." },
+      date_to: { type: "string", description: "ГГГГ-ММ-ДД включительно. По умолчанию сегодня." },
+      group_by: { type: "string", enum: ["list", "month", "week", "day", "counterparty", "responsible", "status", "none"], description: "По умолчанию list." },
+      limit: { type: "integer", description: "Максимум строк (по умолчанию 50, до 300)." },
+    } },
+  },
+  {
     name: "find_counterparties",
     description: "Найти контрагентов (клиентов) в продажах 1С по части названия и показать суммы по каждому за период. Полезно, чтобы увидеть все точки сети (например «солнечный»), а также топ клиентов (без фильтра).",
     inputSchema: { type: "object", properties: {
@@ -64,7 +79,7 @@ const TOOLS = [
   },
   {
     name: "production_plan",
-    description: "Сводка по плану производства: заказов к отгрузке, горящих, единиц к выпуску, тонн; время последней синхронизации с 1С.",
+    description: "План производства: сколько каждого товара (штук и кг) нужно, чтобы отгрузить ВСЕ неотгруженные счета, по группам продукции; заказов к отгрузке, горящих; время последней синхронизации с 1С. Остатки склада не учитываются.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -196,6 +211,72 @@ async function callTool(name, args) {
       группировка: gb, данные: list, обновлено: upd,
     };
   }
+  if (name === "invoices_search") {
+    const today = kostanayNow().toISOString().slice(0, 10);
+    const ok = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+    const from = ok(args.date_from) ? args.date_from : today.slice(0, 4) + "-01-01";
+    const to = ok(args.date_to) ? args.date_to : today;
+    const y1 = parseInt(from.slice(0, 4), 10), y2 = parseInt(to.slice(0, 4), 10);
+    if (y2 < y1 || y2 - y1 > 3) throw new Error("некорректный период");
+    const cq = String(args.counterparty_contains || "").toLowerCase().trim();
+    const rq = String(args.responsible_contains || "").toLowerCase().trim();
+    const mq = String(args.comment_contains || "").toLowerCase().trim();
+    const st = args.status || "all";
+    const gb = args.group_by || "list";
+    let all = [], upd = null;
+    for (let y = y1; y <= y2; y++) { const r = await invoices.getInvoices(y); all = all.concat(r.rows); upd = r.updatedAt; }
+    const rows = all.filter((x) => x.d >= from && x.d <= to
+      && (!cq || x.c.toLowerCase().indexOf(cq) !== -1)
+      && (!rq || x.r.toLowerCase().indexOf(rq) !== -1)
+      && (!mq || x.m.toLowerCase().indexOf(mq) !== -1)
+      && (st === "all" || (st === "shipped") === x.shipped));
+    const shippedRows = rows.filter((x) => x.shipped);
+    const head = {
+      период: from + " — " + to, счетов: rows.length, сумма_тг: Math.round(rows.reduce((a, x) => a + x.s, 0)),
+      отгружено_счетов: shippedRows.length, отгружено_тг: Math.round(shippedRows.reduce((a, x) => a + x.s, 0)),
+      не_отгружено_счетов: rows.length - shippedRows.length,
+      не_отгружено_тг: Math.round(rows.filter((x) => !x.shipped).reduce((a, x) => a + x.s, 0)),
+      обновлено: upd,
+    };
+    const limit = Math.min(Math.max(parseInt(args.limit, 10) || 50, 1), 300);
+    if (gb === "list") {
+      const sorted = rows.slice().sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+      const nowMs = Date.parse(today + "T00:00:00Z");
+      head.счета = sorted.slice(0, limit).map((x) => {
+        const o = { номер: x.n, дата: x.d, сумма_тг: Math.round(x.s), контрагент: x.c, ответственный: x.r,
+          комментарий: x.m.length > 300 ? x.m.slice(0, 300) + "…" : x.m, отгружен: x.shipped ? "да" : "нет" };
+        if (x.shipped) { o.дата_отгрузки = x.sd; o.реализация = x.sn; }
+        else o.дней_без_отгрузки = Math.max(0, Math.round((nowMs - Date.parse(x.d + "T00:00:00Z")) / 86400000));
+        return o;
+      });
+      if (rows.length > limit) head.примечание = "Показаны последние " + limit + " из " + rows.length + "; уточните фильтры или увеличьте limit.";
+      return head;
+    }
+    const keyOf = (x) => {
+      if (gb === "month") return x.d.slice(0, 7);
+      if (gb === "day") return x.d;
+      if (gb === "counterparty") return x.c || "(не указан)";
+      if (gb === "responsible") return x.r || "(не указан)";
+      if (gb === "status") return x.shipped ? "отгружен" : "не отгружен";
+      if (gb === "week") {
+        const dt = new Date(x.d + "T00:00:00Z");
+        return new Date(dt.getTime() - ((dt.getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10);
+      }
+      return "всего";
+    };
+    const g = {};
+    rows.forEach((x) => {
+      const o = g[keyOf(x)] || (g[keyOf(x)] = { счетов: 0, сумма_тг: 0, отгружено_счетов: 0, отгружено_тг: 0 });
+      o.счетов++; o.сумма_тг += x.s;
+      if (x.shipped) { o.отгружено_счетов++; o.отгружено_тг += x.s; }
+    });
+    let list = Object.keys(g).map((k) => ({ группа: k, счетов: g[k].счетов, сумма_тг: Math.round(g[k].сумма_тг),
+      отгружено_счетов: g[k].отгружено_счетов, отгружено_тг: Math.round(g[k].отгружено_тг) }));
+    if (gb === "counterparty" || gb === "responsible") { list.sort((a, b) => b.сумма_тг - a.сумма_тг); list = list.slice(0, limit); }
+    else { list.sort((a, b) => (a.группа < b.группа ? -1 : 1)); if (gb === "week") list.forEach((x) => { x.группа = "неделя с " + x.группа; }); }
+    head.группировка = gb; head.данные = list;
+    return head;
+  }
   if (name === "find_counterparties") {
     const nowY = kostanayNow().getUTCFullYear();
     const year = Math.min(Math.max(parseInt(args.year, 10) || nowY, 2020), nowY);
@@ -241,7 +322,16 @@ async function callTool(name, args) {
     if (!st.ordersRaw || !st.itemsRaw || !st.ordersRaw.length) return { сообщение: "Данных пока нет (ждём синхронизацию с 1С)." };
     const settings = Object.assign({}, Engine.DEFAULT_SETTINGS, st.settings || {});
     const c = Engine.compute(st.ordersRaw, st.itemsRaw, settings, new Date());
-    return { итоги: c.totals, последняя_синхронизация: st.meta && st.meta.lastSyncAt };
+    const GN = ["Твёрдая продукция (группа 1)", "Посуда (группа 2)", "Жидкая продукция (группа 3)", "Прочая продукция (группа 4)"];
+    const toRow = (x) => ({ товар: x.p, штук: x.q, кг: x.kg == null ? null : Math.round(x.kg * 10) / 10 });
+    return {
+      итоги: c.totals,
+      к_производству_по_группам: c.planGroups.map((g, i) => ({ группа: GN[i], позиций: g.length, товары: g.map(toRow) })),
+      не_производится_или_прочее: c.other.map((x) => ({ товар: x.p, штук: x.q })),
+      горящих_заказов: c.fires.length,
+      последняя_синхронизация: st.meta && st.meta.lastSyncAt,
+      примечание: "Потребность = сумма товаров во всех неотгруженных счетах. Остатки на складе и готовую продукцию НЕ учитываем — вычтите их, чтобы получить, сколько реально производить.",
+    };
   }
   throw new Error("неизвестный инструмент: " + name);
 }
