@@ -9,6 +9,8 @@ const store = require("./store");
 const salesStats = require("./salesStats");
 const bloggers = require("./bloggers");
 const invoices = require("./invoices");
+const kaspiData = require("./kaspiData");
+const kaspiRequest = require("./kaspiRequest");
 const Engine = require("../public/js/engine.js");
 
 const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
@@ -57,6 +59,42 @@ const TOOLS = [
       group_by: { type: "string", enum: ["list", "month", "week", "day", "counterparty", "responsible", "status", "none"], description: "По умолчанию list." },
       limit: { type: "integer", description: "Максимум строк (по умолчанию 50, до 300)." },
     } },
+  },
+  {
+    name: "kaspi_orders",
+    description: "Заказы Kaspi Магазина НАПРЯМУЮ из Kaspi API за любой период (до 62 дней за запрос): число заказов и сумма, статус (state/status), город доставки, способ оплаты, способ доставки (Kaspi Доставка / самовывоз / свой курьер), плановая дата доставки. Группировка по дням, неделям, месяцам, статусам, городам, оплате, доставке или список заказов. Данные свежие (кэш 10 минут). Телефоны клиентов Kaspi скрывает; имена и адреса отдаются только при include_customer=true.",
+    inputSchema: { type: "object", properties: {
+      date_from: { type: "string", description: "ГГГГ-ММ-ДД. По умолчанию 6 дней назад." },
+      date_to: { type: "string", description: "ГГГГ-ММ-ДД включительно. По умолчанию сегодня." },
+      state: { type: "string", enum: ["NEW", "SIGN_REQUIRED", "PICKUP", "DELIVERY", "KASPI_DELIVERY", "ARCHIVE"], description: "Только заказы в этом состоянии. По умолчанию все. ARCHIVE = завершённые/отменённые, NEW = новые, KASPI_DELIVERY = доставка Kaspi." },
+      status_contains: { type: "string", description: "Фильтр по статусу, например: COMPLETED, CANCELLED, RETURNED, ACCEPTED_BY_MERCHANT." },
+      group_by: { type: "string", enum: ["day", "week", "month", "state", "status", "city", "payment", "delivery", "list", "none"], description: "По умолчанию day." },
+      include_customer: { type: "boolean", description: "Для group_by=list: добавить имя клиента и адрес." },
+      limit: { type: "integer", description: "Максимум строк (по умолчанию 50, до 300)." },
+    } },
+  },
+  {
+    name: "kaspi_order_items",
+    description: "Товарный состав заказов Kaspi за период (до 31 дня): сколько штук и на какую сумму продано по каждому товару Kaspi; можно сгруппировать по дням или неделям. Состав каждого заказа читается отдельным запросом, поэтому первый вызов за большой период может быть неполным: в ответе есть «готовность» — повторите вопрос через 1–2 минуты, и данные дополнятся.",
+    inputSchema: { type: "object", properties: {
+      date_from: { type: "string", description: "ГГГГ-ММ-ДД. По умолчанию 6 дней назад." },
+      date_to: { type: "string", description: "ГГГГ-ММ-ДД включительно. По умолчанию сегодня." },
+      item_contains: { type: "string", description: "Часть названия товара." },
+      status_contains: { type: "string", description: "Фильтр по статусу заказа, например COMPLETED. По умолчанию кроме отменённых." },
+      include_cancelled: { type: "boolean", description: "Учитывать отменённые и возвращённые заказы. По умолчанию нет." },
+      group_by: { type: "string", enum: ["item", "day", "week", "none"], description: "По умолчанию item." },
+      limit: { type: "integer", description: "Максимум строк (по умолчанию 50)." },
+    } },
+  },
+  {
+    name: "kaspi_request",
+    description: "Произвольный запрос к Kaspi Seller API (https://kaspi.kz/shop/api/v2/...) с токеном магазина; ответ возвращается как есть (status, contentType, body). По умолчанию разрешён только GET (чтение). Методы POST/PATCH/PUT/DELETE МЕНЯЮТ данные в Kaspi и работают, только если владелец включил KASPI_REQUEST_WRITE=1; использовать их только по прямой просьбе владельца.",
+    inputSchema: { type: "object", properties: {
+      endpoint: { type: "string", description: "Путь внутри /shop/api/v2/, например: orders или orders/12345/entries" },
+      method: { type: "string", enum: ["GET", "POST", "PATCH", "PUT", "DELETE"], description: "По умолчанию GET." },
+      query: { type: "object", description: "Параметры запроса объектом, например {\"filter[orders][state]\":\"NEW\",\"page[size]\":10}" },
+      body: { description: "Тело запроса (объект или строка JSON) для POST/PATCH/PUT." },
+    }, required: ["endpoint"] },
   },
   {
     name: "find_counterparties",
@@ -276,6 +314,85 @@ async function callTool(name, args) {
     else { list.sort((a, b) => (a.группа < b.группа ? -1 : 1)); if (gb === "week") list.forEach((x) => { x.группа = "неделя с " + x.группа; }); }
     head.группировка = gb; head.данные = list;
     return head;
+  }
+  if (name === "kaspi_orders" || name === "kaspi_order_items") {
+    const today = kostanayNow().toISOString().slice(0, 10);
+    const ok = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+    const to = ok(args.date_to) ? args.date_to : today;
+    const from = ok(args.date_from) ? args.date_from : new Date(Date.parse(to + "T00:00:00Z") - 6 * 86400000).toISOString().slice(0, 10);
+    const span = Math.round((Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / 86400000) + 1;
+    const maxSpan = name === "kaspi_orders" ? 62 : 31;
+    if (span < 1 || span > maxSpan) throw new Error("период должен быть от 1 до " + maxSpan + " дней (сейчас " + span + ")");
+    const sq = String(args.status_contains || "").toLowerCase().trim();
+    const limit = Math.min(Math.max(parseInt(args.limit, 10) || 50, 1), 300);
+    const weekOf = (d) => {
+      const dt = new Date(d + "T00:00:00Z");
+      return new Date(dt.getTime() - ((dt.getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10);
+    };
+    if (name === "kaspi_orders") {
+      const gb = args.group_by || "day";
+      let orders = await kaspiData.getOrders(from, to, args.state || null);
+      if (sq) orders = orders.filter((o) => String(o.status).toLowerCase().indexOf(sq) !== -1 || String(o.state).toLowerCase().indexOf(sq) !== -1);
+      const head = { период: from + " — " + to, заказов: orders.length, сумма_тг: Math.round(orders.reduce((a, o) => a + o.sum, 0)) };
+      if (gb === "list") {
+        head.заказы = orders.slice().sort((a, b) => b.ms - a.ms).slice(0, limit).map((o) => {
+          const r = { номер: o.code, дата: o.d, состояние: o.state, статус: o.status, сумма_тг: o.sum, город: o.city, оплата: o.pay, доставка: o.deliv, kaspi_доставка: o.kd, плановая_дата_доставки: o.planned };
+          if (args.include_customer) { r.клиент = o.cust; r.адрес = o.addr; }
+          return r;
+        });
+        if (orders.length > limit) head.примечание = "Показаны последние " + limit + " из " + orders.length;
+        return head;
+      }
+      const keyOf = (o) => {
+        if (gb === "day") return o.d;
+        if (gb === "week") return weekOf(o.d);
+        if (gb === "month") return o.d.slice(0, 7);
+        if (gb === "state") return o.state;
+        if (gb === "status") return o.status || "(нет)";
+        if (gb === "city") return o.city || "(не указан)";
+        if (gb === "payment") return o.pay || "(не указан)";
+        if (gb === "delivery") return o.deliv || "(не указан)";
+        return "всего";
+      };
+      const g = {};
+      orders.forEach((o) => { const x = g[keyOf(o)] || (g[keyOf(o)] = { заказов: 0, сумма_тг: 0 }); x.заказов++; x.сумма_тг += o.sum; });
+      let list = Object.keys(g).map((k) => ({ группа: k, заказов: g[k].заказов, сумма_тг: Math.round(g[k].сумма_тг) }));
+      const timeGroup = gb === "day" || gb === "week" || gb === "month";
+      if (timeGroup) { list.sort((a, b) => (a.группа < b.группа ? -1 : 1)); if (gb === "week") list.forEach((x) => { x.группа = "неделя с " + x.группа; }); }
+      else { list.sort((a, b) => b.заказов - a.заказов); list = list.slice(0, limit); }
+      head.группировка = gb; head.данные = list;
+      head.примечание = "Заказы по дате создания. Суммы — totalPrice из Kaspi (включая отменённые, если не отфильтровано по статусу).";
+      return head;
+    }
+    // kaspi_order_items
+    let orders = await kaspiData.getOrders(from, to, null);
+    if (sq) orders = orders.filter((o) => String(o.status).toLowerCase().indexOf(sq) !== -1 || String(o.state).toLowerCase().indexOf(sq) !== -1);
+    else if (!args.include_cancelled) orders = orders.filter((o) => !/cancel|return/i.test(o.status));
+    const cacheKey = from + "|" + to;
+    const prog = await kaspiData.ensureEntries(orders, cacheKey, 85000);
+    const iq = String(args.item_contains || "").toLowerCase().trim();
+    const gb = args.group_by || "item";
+    const g = {};
+    let pieces = 0, sum = 0;
+    prog.ready.forEach((o) => {
+      kaspiData.entriesOf(o.id).forEach((l) => {
+        if (iq && l.name.toLowerCase().indexOf(iq) === -1) return;
+        const k = gb === "day" ? o.d : gb === "week" ? weekOf(o.d) : gb === "none" ? "всего" : l.name;
+        const x = g[k] || (g[k] = { штук: 0, сумма_тг: 0 });
+        x.штук += l.q; x.сумма_тг += l.s; pieces += l.q; sum += l.s;
+      });
+    });
+    let list = Object.keys(g).map((k) => ({ группа: gb === "week" ? "неделя с " + k : k, штук: g[k].штук, сумма_тг: Math.round(g[k].сумма_тг) }));
+    if (gb === "item") { list.sort((a, b) => b.штук - a.штук); list = list.slice(0, limit); }
+    else list.sort((a, b) => (a.группа < b.группа ? -1 : 1));
+    return {
+      период: from + " — " + to, заказов_всего: prog.total, готовность: prog.ready.length + " из " + prog.total + " заказов",
+      итого_штук: pieces, итого_тг: Math.round(sum), группировка: gb, данные: list,
+      примечание: prog.ready.length < prog.total ? "Данные неполные: состав остальных заказов ещё загружается. Повторите вопрос через 1–2 минуты." : "Данные полные.",
+    };
+  }
+  if (name === "kaspi_request") {
+    return await kaspiRequest.request(args);
   }
   if (name === "find_counterparties") {
     const nowY = kostanayNow().getUTCFullYear();
